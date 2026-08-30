@@ -112,7 +112,6 @@ class PornDude : AnimeHttpSource() {
         val videos = extractVideosFromDocument(document, pageUrl)
         if (videos.isNotEmpty()) return videos
 
-        // Tenta buscar no embed caso a página principal não tenha retornado os links
         val videoId = extractVideoId(pageUrl)
         if (videoId != null) {
             val embedUrl = "$baseUrl/embed/$videoId"
@@ -177,23 +176,22 @@ class PornDude : AnimeHttpSource() {
         val videos = mutableListOf<Video>()
         val html = document.html()
 
-        // 1. Regex para extrair do player do KVS (kt_player / flashvars)
-        val kvsRegex = Regex("""['"]?(video_url(?:_alt\d*)?)['"]?\s*:\s*['"]([^'"]+)['"]""")
-        val qualityRegex = Regex("""['"]?(video_url(?:_alt\d*)?_text)['"]?\s*:\s*['"]([^'"]+)['"]""")
+        // Regex ajustado para capturar video_url, video_alt_url, video_alt_url2, video_alt_url3
+        val pairRegex = Regex("""(video_url|video_alt_url\d*)\s*:\s*['"]([^'"]+)['"]""")
+        val textRegex = Regex("""(video_url_text|video_alt_url\d*_text)\s*:\s*['"]([^'"]+)['"]""")
 
-        val qualityMap = qualityRegex.findAll(html).associate {
-            it.groupValues[1].replace("_text", "") to it.groupValues[2]
+        val qualityMap = textRegex.findAll(html).associate {
+            val key = it.groupValues[1].removeSuffix("_text")
+            key to it.groupValues[2]
         }
 
-        kvsRegex.findAll(html).forEach { match ->
+        pairRegex.findAll(html).forEach { match ->
             val key = match.groupValues[1]
             var url = match.groupValues[2].replace("&amp;", "&").trim()
 
-            if (url.isNotBlank() && !url.startsWith("function")) {
-                if (url.startsWith("//")) url = "https:$url"
-                else if (url.startsWith("/")) url = "$baseUrl$url"
-
+            if (url.isNotBlank() && !url.startsWith("function") && url.startsWith("http")) {
                 val quality = qualityMap[key] ?: when {
+                    "4k" in url.lowercase() -> "4K"
                     "1080" in url -> "1080p"
                     "720" in url -> "720p"
                     "480" in url -> "480p"
@@ -211,7 +209,7 @@ class PornDude : AnimeHttpSource() {
 
         if (videos.isNotEmpty()) return videos.distinctBy { it.url }
 
-        // 2. Fallback: captura direta de arquivos .mp4
+        // Fallback: busca direta por links .mp4
         val mp4Regex = Regex("""https?://[^\s"'<>]+?\.mp4[^\s"'<>]*""")
         mp4Regex.findAll(html).forEach { match ->
             val url = match.value.replace("&amp;", "&")
@@ -223,7 +221,7 @@ class PornDude : AnimeHttpSource() {
 
         if (videos.isNotEmpty()) return videos.distinctBy { it.url }
 
-        // 3. Fallback: tags <video> e <source>
+        // Fallback: tags <video>
         document.select("video source, video").forEach { element ->
             var src = element.attr("src").ifBlank { element.attr("data-src") }
             if (src.isNotBlank()) {
