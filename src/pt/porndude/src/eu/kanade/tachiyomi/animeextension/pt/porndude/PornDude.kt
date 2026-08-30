@@ -15,117 +15,187 @@ import org.jsoup.nodes.Document
 class PornDude : AnimeHttpSource() {
 
     override val name = "3D Porn Dude"
+
     override val baseUrl = "https://3dporndude.com"
+
     override val lang = "pt"
+
     override val supportsLatest = true
 
+    // ============================== Headers ==============================
+
+    override fun headersBuilder() = super.headersBuilder()
+        .add("Referer", "$baseUrl/")
+
     // ============================== Popular ===============================
+
     override fun popularAnimeRequest(page: Int): Request {
         val url = if (page == 1) {
             baseUrl
         } else {
             "$baseUrl/?mode=async&function=get_block&block_id=list_videos_most_recent_videos&sort_by=post_date&from=$page"
         }
+
         return GET(url, headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animes = parseVideoCards(document)
-        val hasNextPage = document.selectFirst("a.next") != null
+
+        val hasNextPage = document.selectFirst("a.next") != null ||
+            document.select("a[href*='page']").isNotEmpty()
+
         return AnimesPage(animes, hasNextPage)
     }
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
-    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
+
+    override fun latestUpdatesRequest(page: Int): Request {
+        return popularAnimeRequest(page)
+    }
+
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        return popularAnimeParse(response)
+    }
 
     // =============================== Search ===============================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+
+    override fun searchAnimeRequest(
+        page: Int,
+        query: String,
+        filters: AnimeFilterList,
+    ): Request {
         val encodedQuery = query.trim().replace(" ", "+")
+
         val url = if (page == 1) {
             "$baseUrl/search/?q=$encodedQuery"
         } else {
             "$baseUrl/search/$encodedQuery/page/$page/"
         }
+
         return GET(url, headers)
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animes = parseVideoCards(document)
+
         val hasNextPage = document.selectFirst("a.next") != null ||
-            document.select("ul.pagination a[href*='page']").isNotEmpty()
+            document.select("ul.pagination a[href*='page']").isNotEmpty() ||
+            document.select("a[href*='page/']").isNotEmpty()
+
         return AnimesPage(animes, hasNextPage)
     }
 
     // =========================== Anime Details ============================
+
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
-        val anime = SAnime.create()
-        val url = response.request.url.toString()
-        anime.setUrlWithoutDomain(url.substringAfter(baseUrl))
 
-        anime.title = document.selectFirst("h1")?.text()?.trim()
-            ?: document.selectFirst("meta[property='og:title']")?.attr("content")?.trim()
-            ?: "Sem título"
+        return SAnime.create().apply {
+            setUrlWithoutDomain(response.request.url.toString())
 
-        anime.thumbnail_url = document.selectFirst("div.fp-poster img")?.attr("src")
-            ?: document.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: ""
+            title = document.selectFirst("h1")?.text()?.trim()
+                ?: document.selectFirst("meta[property='og:title']")
+                    ?.attr("content")
+                    ?.trim()
+                ?: "Sem título"
 
-        anime.description = document.selectFirst("div.video-description")?.text()
-            ?: document.selectFirst("div.description")?.text()
-            ?: document.selectFirst("meta[name='description']")?.attr("content")
-            ?: document.selectFirst("meta[property='og:description']")?.attr("content")
-            ?: ""
+            thumbnail_url = document.selectFirst("div.fp-poster img")
+                ?.attr("abs:src")
+                ?.takeIf { it.isNotBlank() }
+                ?: document.selectFirst("meta[property='og:image']")
+                    ?.attr("content")
+                    ?.takeIf { it.isNotBlank() }
 
-        // Gêneros extraídos do flashvars (video_categories)
-        val script = document.select("script").firstOrNull { it.html().contains("flashvars") }
-        if (script != null) {
-            val categories = extractFlashvar(script.html(), "video_categories")
-            if (!categories.isNullOrBlank()) {
-                anime.genre = categories.split(",").joinToString(", ") { it.trim() }
+            description = document.selectFirst("div.video-description")
+                ?.text()
+                ?.trim()
+                ?: document.selectFirst("div.description")
+                    ?.text()
+                    ?.trim()
+                ?: document.selectFirst("meta[name='description']")
+                    ?.attr("content")
+                    ?.trim()
+                ?: document.selectFirst("meta[property='og:description']")
+                    ?.attr("content")
+                    ?.trim()
+                ?: ""
+
+            val script = document.select("script")
+                .firstOrNull { it.html().contains("flashvars") }
+
+            if (script != null) {
+                val categories = extractFlashvar(
+                    script.html(),
+                    "video_categories",
+                )
+
+                if (!categories.isNullOrBlank()) {
+                    genre = categories
+                        .split(",")
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                        .joinToString(", ")
+                }
             }
-        }
 
-        anime.status = SAnime.COMPLETED
-        return anime
+            status = SAnime.COMPLETED
+            initialized = true
+        }
     }
 
-    // =========================== Episode List ============================
-    // Como cada "anime" é um vídeo único, criamos um único episódio com a URL da própria página
+    // ============================== Episodes ==============================
+
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val episode = SEpisode.create()
-        val url = response.request.url.toString()
-        episode.setUrlWithoutDomain(url.substringAfter(baseUrl))
-        episode.name = "Vídeo"
-        episode.episode_number = 1f
-        episode.date_upload = 0L
-        return listOf(episode)
+        return listOf(
+            SEpisode.create().apply {
+                setUrlWithoutDomain(response.request.url.toString())
+                name = "Vídeo"
+                episode_number = 1f
+                date_upload = 0L
+            },
+        )
     }
 
     // ============================ Video Links =============================
-    override fun videoListParse(response: Response): List<Video> {
-        // Tenta primeiro a página original (contém flashvars)
-        val document = response.asJsoup()
-        val videos = extractVideosFromDocument(document, response.request.url.toString())
-        if (videos.isNotEmpty()) return videos
 
-        // Fallback: tenta a página embed
-        val videoId = extractVideoId(response.request.url.toString())
+    override fun videoListParse(response: Response): List<Video> {
+        val document = response.asJsoup()
+        val pageUrl = response.request.url.toString()
+
+        val videos = extractVideosFromDocument(
+            document,
+            pageUrl,
+        )
+
+        if (videos.isNotEmpty()) {
+            return videos
+        }
+
+        val videoId = extractVideoId(pageUrl)
+
         if (videoId != null) {
             val embedUrl = "$baseUrl/embed/$videoId"
-            val embedDoc = try {
-                client.newCall(GET(embedUrl, headers)).execute().use { resp ->
-                    if (resp.isSuccessful) resp.asJsoup() else null
-                }
-            } catch (e: Exception) {
-                null
-            }
 
-            if (embedDoc != null) {
-                return extractVideosFromDocument(embedDoc, embedUrl)
+            val embedDocument = runCatching {
+                client.newCall(
+                    GET(embedUrl, headers),
+                ).execute().use { embedResponse ->
+                    if (embedResponse.isSuccessful) {
+                        embedResponse.asJsoup()
+                    } else {
+                        null
+                    }
+                }
+            }.getOrNull()
+
+            if (embedDocument != null) {
+                return extractVideosFromDocument(
+                    embedDocument,
+                    embedUrl,
+                )
             }
         }
 
@@ -133,29 +203,58 @@ class PornDude : AnimeHttpSource() {
     }
 
     // ============================= Utilities ==============================
+
     private fun parseVideoCards(document: Document): List<SAnime> {
         return document.select("div.thumb-itm").mapNotNull { element ->
-            val link = element.selectFirst("a[href*='/video/']") ?: return@mapNotNull null
+            val link = element.selectFirst("a[href*='/video/']")
+                ?: return@mapNotNull null
+
+            val href = link.attr("href").trim()
+
+            if (href.isBlank()) {
+                return@mapNotNull null
+            }
+
+            val url = toRelativeUrl(href)
+
             val title = link.attr("title").trim()
-            val url = link.attr("href").substringBefore("?")
-            val thumbnail = element.selectFirst("img")?.attr("data-webp")
-                ?: element.selectFirst("img")?.attr("src")
+                .ifBlank {
+                    link.text().trim()
+                }
+
+            if (title.isBlank()) {
+                return@mapNotNull null
+            }
+
+            val thumbnail = element.selectFirst("img")?.let { image ->
+                image.attr("abs:src").takeIf { it.isNotBlank() }
+                    ?: image.attr("abs:data-webp").takeIf { it.isNotBlank() }
+                    ?: image.attr("data-webp").takeIf { it.isNotBlank() }
+            }
+
             SAnime.create().apply {
+                this.url = url
                 this.title = title
-                this.url = url // URL completa é aceita pelo framework, mas setUrlWithoutDomain seria mais seguro se convertermos
-                this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
+                this.thumbnail_url = thumbnail
             }
         }
     }
 
-    private fun extractVideosFromDocument(document: Document, pageUrl: String): List<Video> {
-        // 1) Tentar extrair do flashvars
-        val script = document.select("script").firstOrNull { it.html().contains("flashvars") }
+    private fun extractVideosFromDocument(
+        document: Document,
+        pageUrl: String,
+    ): List<Video> {
+        val videos = mutableListOf<Video>()
+
+        // ========================== Flashvars ==========================
+
+        val script = document.select("script")
+            .firstOrNull { it.html().contains("flashvars") }
+
         if (script != null) {
             val scriptContent = script.html()
-            val videos = mutableListOf<Video>()
 
-            val qualityMap = mapOf(
+            val qualityMap = linkedMapOf(
                 "video_url" to "video_url_text",
                 "video_alt_url" to "video_alt_url_text",
                 "video_alt_url2" to "video_alt_url2_text",
@@ -163,9 +262,31 @@ class PornDude : AnimeHttpSource() {
             )
 
             for ((urlKey, qualityKey) in qualityMap) {
-                val rawUrl = extractFlashvar(scriptContent, urlKey) ?: continue
-                val quality = extractFlashvar(scriptContent, qualityKey) ?: "HD"
-                val videoUrl = rawUrl.replace("&amp;", "&")
+                val rawUrl = extractFlashvar(
+                    scriptContent,
+                    urlKey,
+                ) ?: continue
+
+                val videoUrl = rawUrl
+                    .replace("&amp;", "&")
+                    .trim()
+
+                if (videoUrl.isBlank()) {
+                    continue
+                }
+
+                if (!videoUrl.startsWith("http://") &&
+                    !videoUrl.startsWith("https://")
+                ) {
+                    continue
+                }
+
+                val quality = extractFlashvar(
+                    scriptContent,
+                    qualityKey,
+                )?.trim()
+                    ?.ifBlank { null }
+                    ?: "HD"
 
                 videos.add(
                     Video(
@@ -173,29 +294,41 @@ class PornDude : AnimeHttpSource() {
                         quality,
                         videoUrl,
                         headers = headers.newBuilder()
-                            .add("Referer", pageUrl)
+                            .set("Referer", pageUrl)
                             .build(),
                     ),
                 )
             }
-
-            if (videos.isNotEmpty()) {
-                return videos.sortedByDescending { it.quality.replace("p", "").toIntOrNull() ?: 0 }
-            }
         }
 
-        // 2) Fallback: tentar extrair de tag <video> (pode conter src)
-        val videoTag = document.selectFirst("video.fp-engine")
+        if (videos.isNotEmpty()) {
+            return videos
+                .distinctBy { it.videoUrl }
+                .sortedByDescending {
+                    extractQualityNumber(it.quality)
+                }
+        }
+
+        // ============================ Video ============================
+
+        val videoTag = document.selectFirst("video")
+
         if (videoTag != null) {
-            val src = videoTag.attr("src")
-            if (src.isNotBlank()) {
+            val source = videoTag.selectFirst("source")
+
+            val src = source?.attr("abs:src")
+                ?.takeIf { it.isNotBlank() }
+                ?: videoTag.attr("abs:src")
+                    .takeIf { it.isNotBlank() }
+
+            if (!src.isNullOrBlank()) {
                 return listOf(
                     Video(
                         src,
                         "Video",
                         src,
                         headers = headers.newBuilder()
-                            .add("Referer", pageUrl)
+                            .set("Referer", pageUrl)
                             .build(),
                     ),
                 )
@@ -205,17 +338,73 @@ class PornDude : AnimeHttpSource() {
         return emptyList()
     }
 
-    private fun extractVideoId(url: String): String? = Regex("""/video/(\d+)/""").find(url)?.groupValues?.get(1)
+    private fun extractVideoId(url: String): String? {
+        return Regex(
+            """\/video\/(\d+)\/?""",
+        ).find(url)?.groupValues?.getOrNull(1)
+    }
 
-    private fun extractFlashvar(script: String, key: String): String? {
-        // Tenta aspas simples, aceitando espaços extras e quebras de linha
-        val regexSingle = Regex("""$key\s*:\s*'([^']*)'""", RegexOption.DOT_MATCHES_ALL)
-        regexSingle.find(script)?.let { return it.groupValues[1].trim() }
+    private fun extractFlashvar(
+        script: String,
+        key: String,
+    ): String? {
+        val regexSingle = Regex(
+            """$key\s*:\s*'([^']*)'""",
+            RegexOption.DOT_MATCHES_ALL,
+        )
 
-        // Tenta aspas duplas
-        val regexDouble = Regex("""$key\s*:\s*"([^"]*)"""", RegexOption.DOT_MATCHES_ALL)
-        regexDouble.find(script)?.let { return it.groupValues[1].trim() }
+        regexSingle.find(script)?.let {
+            return it.groupValues[1]
+                .trim()
+        }
+
+        val regexDouble = Regex(
+            """$key\s*:\s*"([^"]*)"""",
+            RegexOption.DOT_MATCHES_ALL,
+        )
+
+        regexDouble.find(script)?.let {
+            return it.groupValues[1]
+                .trim()
+        }
 
         return null
+    }
+
+    private fun toRelativeUrl(url: String): String {
+        val cleaned = url
+            .trim()
+            .substringBefore("#")
+
+        return when {
+            cleaned.startsWith(baseUrl) -> {
+                cleaned.removePrefix(baseUrl)
+                    .ifBlank { "/" }
+            }
+
+            cleaned.startsWith("https://") ||
+                cleaned.startsWith("http://") -> {
+                runCatching {
+                    okhttp3.HttpUrl.get(cleaned)
+                        .encodedPath
+                        .let { path ->
+                            if (path.isBlank()) "/" else path
+                        }
+                }.getOrDefault(cleaned)
+            }
+
+            cleaned.startsWith("/") -> cleaned
+
+            else -> "/$cleaned"
+        }
+    }
+
+    private fun extractQualityNumber(quality: String): Int {
+        return Regex("""(\d{3,4})\s*p?""")
+            .find(quality.lowercase())
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+            ?: 0
     }
 }
