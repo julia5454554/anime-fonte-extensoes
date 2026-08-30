@@ -104,21 +104,25 @@ class PornDude : AnimeHttpSource() {
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
-        val videos = extractVideosFromDocument(document)
-        if (videos.isNotEmpty()) return videos
-
-        // Fallback: tentar página de embed
+        // Tenta primeiro a página embed, que não tem anúncio
         val videoId = extractVideoId(response.request.url.toString())
         if (videoId != null) {
             val embedUrl = "$baseUrl/embed/$videoId"
-            val embedResponse = client.newCall(GET(embedUrl, headers)).execute()
-            if (embedResponse.isSuccessful) {
-                val embedDoc = embedResponse.asJsoup()
-                return extractVideosFromDocument(embedDoc)
+            val embedDoc = try {
+                client.newCall(GET(embedUrl, headers)).execute().use { resp ->
+                    if (resp.isSuccessful) resp.asJsoup() else null
+                }
+            } catch (e: Exception) { null }
+
+            if (embedDoc != null) {
+                val videos = extractVideosFromDocument(embedDoc, embedUrl)
+                if (videos.isNotEmpty()) return videos
             }
         }
-        return emptyList()
+
+        // Fallback: tenta a página original
+        val document = response.asJsoup()
+        return extractVideosFromDocument(document, response.request.url.toString())
     }
 
     // ============================= Utilities ==============================
@@ -137,7 +141,7 @@ class PornDude : AnimeHttpSource() {
         }
     }
 
-    private fun extractVideosFromDocument(document: Document): List<Video> {
+    private fun extractVideosFromDocument(document: Document, pageUrl: String): List<Video> {
         val script = document.select("script").firstOrNull { it.html().contains("flashvars") }
             ?: return emptyList()
         val scriptContent = script.html()
@@ -162,7 +166,7 @@ class PornDude : AnimeHttpSource() {
                     quality,
                     videoUrl,
                     headers = headers.newBuilder()
-                        .add("Referer", document.location())
+                        .add("Referer", pageUrl)
                         .build(),
                 ),
             )
