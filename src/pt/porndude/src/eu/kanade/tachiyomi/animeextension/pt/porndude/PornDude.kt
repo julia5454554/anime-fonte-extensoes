@@ -1,10 +1,10 @@
 package eu.kanade.tachiyomi.animeextension.pt.porndude
 
-import eu.kanade.tachiyomi.animesource.AnimeHttpSource
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
-import eu.kanade.tachiyomi.animesource.model.SChapter
+import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
@@ -90,14 +90,14 @@ class PornDude : AnimeHttpSource() {
         return anime
     }
 
-    // =========================== Chapter List ============================
-    // Como cada "anime" é um vídeo único, criamos um único capítulo com a URL da própria página
-    override fun chapterListParse(response: Response): List<SChapter> {
-        val chapter = SChapter.create()
-        chapter.setUrlWithoutDomain(response.request.url.toString())
-        chapter.name = "Vídeo"
-        chapter.date_upload = 0L
-        return listOf(chapter)
+    // =========================== Episode List ============================
+    // Como cada "anime" é um vídeo único, criamos um único episódio com a URL da própria página
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val episode = SEpisode.create()
+        episode.setUrlWithoutDomain(response.request.url.toString())
+        episode.name = "Vídeo"
+        episode.date_upload = 0L
+        return listOf(episode)
     }
 
     // ============================ Video Links =============================
