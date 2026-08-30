@@ -2,13 +2,13 @@ ext {
     extName = '3D Porn Dude'
     extClass = '.PornDude'
     baseUrl = 'https://3dporndude.com'
-    extVersionCode = 1        // Obrigatório – código de versão da extensão
+    extVersionCode = 1
     isNsfw = true
-    // overrideVersionCode = 1  // Opcional, não use junto com extVersionCode
 }
 
 apply plugin: "kei.plugins.extension.legacy"
 
 dependencies {
-    // Nenhuma dependência extra além do padrão (jsoup já está incluso)
+    implementation(project(":core"))
+    // Outras dependências, se necessário
 }
