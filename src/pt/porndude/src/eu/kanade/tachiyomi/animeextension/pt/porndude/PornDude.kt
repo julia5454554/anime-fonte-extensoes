@@ -115,19 +115,21 @@ class PornDude : AnimeHttpSource() {
         val videos = extractVideosFromDocument(document, response.request.url.toString())
         if (videos.isNotEmpty()) return videos
 
-        // Se falhar, tenta buscar a embed original (caso a URL atual seja a normal)
+        // Se falhar, tenta a página original (normal)
         val videoId = extractVideoId(response.request.url.toString())
         if (videoId != null) {
-            val embedUrl = "$baseUrl/embed/$videoId"
-            val embedDoc = try {
-                client.newCall(GET(embedUrl, headers)).execute().use { resp ->
+            // Tenta a página normal, com Referer da própria página
+            val normalUrl = "$baseUrl/video/$videoId/"
+            val normalDoc = try {
+                client.newCall(GET(normalUrl, headers)).execute().use { resp ->
                     if (resp.isSuccessful) resp.asJsoup() else null
                 }
             } catch (e: Exception) {
                 null
             }
-            if (embedDoc != null) {
-                return extractVideosFromDocument(embedDoc, embedUrl)
+            if (normalDoc != null) {
+                val normalVideos = extractVideosFromDocument(normalDoc, normalUrl)
+                if (normalVideos.isNotEmpty()) return normalVideos
             }
         }
 
@@ -213,10 +215,10 @@ class PornDude : AnimeHttpSource() {
             }
         }
 
-        // 2) Fallback: tentar extrair de tag <video> (pode conter src)
-        val videoTag = document.selectFirst("video.fp-engine")
-        if (videoTag != null) {
-            val src = videoTag.attr("src")
+        // 2) Fallback: tentar extrair de tag <video> ou <source>
+        val videoTags = document.select("video, video source")
+        for (tag in videoTags) {
+            val src = tag.attr("src")
             if (src.isNotBlank()) {
                 return listOf(
                     Video(
