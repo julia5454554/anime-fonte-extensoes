@@ -64,8 +64,7 @@ class PornDude : AnimeHttpSource() {
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
         val anime = SAnime.create()
-        val url = response.request.url.toString()
-        anime.setUrlWithoutDomain(url.substringAfter(baseUrl))
+        anime.setUrlWithoutDomain(response.request.url.toString())
 
         anime.title = document.selectFirst("h1")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")?.trim()
@@ -77,7 +76,6 @@ class PornDude : AnimeHttpSource() {
 
         anime.description = extractDescription(document)
 
-        // Gêneros extraídos do flashvars (video_categories)
         val script = document.select("script").firstOrNull { it.html().contains("flashvars") }
         if (script != null) {
             val categories = extractFlashvar(script.html(), "video_categories")
@@ -91,17 +89,16 @@ class PornDude : AnimeHttpSource() {
     }
 
     // =========================== Episode List ============================
-    // Aponta para a página embed (sem anúncio) para evitar interferência
     override fun episodeListParse(response: Response): List<SEpisode> {
         val videoId = extractVideoId(response.request.url.toString())
         val episodeUrl = if (videoId != null) {
-            "$baseUrl/embed/$videoId" // URL absoluta da embed
+            "$baseUrl/embed/$videoId"
         } else {
-            response.request.url.toString() // fallback: página normal
+            response.request.url.toString()
         }
 
         val episode = SEpisode.create()
-        episode.setUrlWithoutDomain(episodeUrl.substringAfter(baseUrl)) // relativa
+        episode.setUrlWithoutDomain(episodeUrl)
         episode.name = "Vídeo"
         episode.episode_number = 1f
         episode.date_upload = 0L
@@ -110,15 +107,12 @@ class PornDude : AnimeHttpSource() {
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        // A URL do episódio deve ser a embed; tentamos extrair diretamente
         val document = response.asJsoup()
         val videos = extractVideosFromDocument(document, response.request.url.toString())
         if (videos.isNotEmpty()) return videos
 
-        // Se falhar, tenta a página original (normal)
         val videoId = extractVideoId(response.request.url.toString())
         if (videoId != null) {
-            // Tenta a página normal, com Referer da própria página
             val normalUrl = "$baseUrl/video/$videoId/"
             val normalDoc = try {
                 client.newCall(GET(normalUrl, headers)).execute().use { resp ->
@@ -141,13 +135,14 @@ class PornDude : AnimeHttpSource() {
         return document.select("div.thumb-itm").mapNotNull { element ->
             val link = element.selectFirst("a[href*='/video/']") ?: return@mapNotNull null
             val title = link.attr("title").trim()
-            // Usa absUrl para obter URL absoluta correta
-            val url = link.absUrl("href").substringBefore("?")
+            val href = link.attr("href")
             val thumbnail = element.selectFirst("img")?.attr("data-webp")
                 ?: element.selectFirst("img")?.attr("src")
+
             SAnime.create().apply {
                 this.title = title
-                this.url = url
+                // Correção principal: extrai e define apenas o caminho relativo
+                this.setUrlWithoutDomain(href)
                 this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
             }
         }
@@ -180,7 +175,6 @@ class PornDude : AnimeHttpSource() {
     }
 
     private fun extractVideosFromDocument(document: Document, pageUrl: String): List<Video> {
-        // 1) Tentar extrair do flashvars
         val script = document.select("script").firstOrNull { it.html().contains("flashvars") }
         if (script != null) {
             val scriptContent = script.html()
@@ -215,7 +209,6 @@ class PornDude : AnimeHttpSource() {
             }
         }
 
-        // 2) Fallback: tentar extrair de tag <video> ou <source>
         val videoTags = document.select("video, video source")
         for (tag in videoTags) {
             val src = tag.attr("src")
@@ -236,7 +229,8 @@ class PornDude : AnimeHttpSource() {
         return emptyList()
     }
 
-    private fun extractVideoId(url: String): String? = Regex("""/video/(\d+)/""").find(url)?.groupValues?.get(1)
+    // Atualizado para reconhecer IDs tanto de /video/ quanto de /embed/
+    private fun extractVideoId(url: String): String? = Regex("""/(?:video|embed)/(\d+)""").find(url)?.groupValues?.get(1)
 
     private fun extractFlashvar(script: String, key: String): String? {
         val regexSingle = Regex("""$key\s*:\s*'([^']*)'""", RegexOption.DOT_MATCHES_ALL)
