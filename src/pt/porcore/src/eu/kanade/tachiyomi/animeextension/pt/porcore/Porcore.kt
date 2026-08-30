@@ -56,11 +56,12 @@ class Porcore : AnimeHttpSource() {
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val encodedQuery = query.trim().replace(" ", "+")
+        // Busca usa a rota /show/{termo}?ajax&sort=newest
+        val encodedQuery = query.trim().replace(" ", "%20")
         val url = if (page == 1) {
-            "$baseUrl/?q=$encodedQuery"
+            "$baseUrl/show/$encodedQuery?ajax&sort=newest"
         } else {
-            "$baseUrl/?ajax&p=$page&q=$encodedQuery"
+            "$baseUrl/show/$encodedQuery?ajax&p=$page&sort=newest"
         }
         return GET(url, headers)
     }
