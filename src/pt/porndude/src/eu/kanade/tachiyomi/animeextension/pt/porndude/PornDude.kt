@@ -63,7 +63,8 @@ class PornDude : AnimeHttpSource() {
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
         val anime = SAnime.create()
-        anime.setUrlWithoutDomain(response.request.url.toString())
+        val url = response.request.url.toString()
+        anime.setUrlWithoutDomain(url.substringAfter(baseUrl))
 
         anime.title = document.selectFirst("h1")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")?.trim()
@@ -96,9 +97,10 @@ class PornDude : AnimeHttpSource() {
     // Como cada "anime" é um vídeo único, criamos um único episódio com a URL da própria página
     override fun episodeListParse(response: Response): List<SEpisode> {
         val episode = SEpisode.create()
-        episode.setUrlWithoutDomain(response.request.url.toString())
+        val url = response.request.url.toString()
+        episode.setUrlWithoutDomain(url.substringAfter(baseUrl))
         episode.name = "Vídeo"
-        episode.episode_number = 1f   // ← ADICIONADO
+        episode.episode_number = 1f
         episode.date_upload = 0L
         return listOf(episode)
     }
@@ -140,59 +142,82 @@ class PornDude : AnimeHttpSource() {
                 ?: element.selectFirst("img")?.attr("src")
             SAnime.create().apply {
                 this.title = title
-                this.url = url
+                this.url = url  // URL completa é aceita pelo framework, mas setUrlWithoutDomain seria mais seguro se convertermos
                 this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
             }
         }
     }
 
     private fun extractVideosFromDocument(document: Document, pageUrl: String): List<Video> {
+        // 1) Tentar extrair do flashvars
         val script = document.select("script").firstOrNull { it.html().contains("flashvars") }
-            ?: return emptyList()
-        val scriptContent = script.html()
+        if (script != null) {
+            val scriptContent = script.html()
+            val videos = mutableListOf<Video>()
 
-        val videos = mutableListOf<Video>()
-
-        val qualityMap = mapOf(
-            "video_url" to "video_url_text",
-            "video_alt_url" to "video_alt_url_text",
-            "video_alt_url2" to "video_alt_url2_text",
-            "video_alt_url3" to "video_alt_url3_text",
-        )
-
-        for ((urlKey, qualityKey) in qualityMap) {
-            val rawUrl = extractFlashvar(scriptContent, urlKey) ?: continue
-            val quality = extractFlashvar(scriptContent, qualityKey) ?: "HD"
-            val videoUrl = rawUrl.replace("&amp;", "&")
-
-            videos.add(
-                Video(
-                    videoUrl,
-                    quality,
-                    videoUrl,
-                    headers = headers.newBuilder()
-                        .add("Referer", pageUrl)
-                        .build(),
-                ),
+            val qualityMap = mapOf(
+                "video_url" to "video_url_text",
+                "video_alt_url" to "video_alt_url_text",
+                "video_alt_url2" to "video_alt_url2_text",
+                "video_alt_url3" to "video_alt_url3_text",
             )
+
+            for ((urlKey, qualityKey) in qualityMap) {
+                val rawUrl = extractFlashvar(scriptContent, urlKey) ?: continue
+                val quality = extractFlashvar(scriptContent, qualityKey) ?: "HD"
+                val videoUrl = rawUrl.replace("&amp;", "&")
+
+                videos.add(
+                    Video(
+                        videoUrl,
+                        quality,
+                        videoUrl,
+                        headers = headers.newBuilder()
+                            .add("Referer", pageUrl)
+                            .build(),
+                    ),
+                )
+            }
+
+            if (videos.isNotEmpty()) {
+                return videos.sortedByDescending { it.quality.replace("p", "").toIntOrNull() ?: 0 }
+            }
         }
 
-        // Ordena por resolução (4K > 1080p > 720p > 480p)
-        return videos.sortedByDescending { it.quality.replace("p", "").toIntOrNull() ?: 0 }
+        // 2) Fallback: tentar extrair de tag <video> (pode conter src)
+        val videoTag = document.selectFirst("video.fp-engine")
+        if (videoTag != null) {
+            val src = videoTag.attr("src")
+            if (src.isNotBlank()) {
+                return listOf(
+                    Video(
+                        src,
+                        "Video",
+                        src,
+                        headers = headers.newBuilder()
+                            .add("Referer", pageUrl)
+                            .build(),
+                    ),
+                )
+            }
+        }
+
+        return emptyList()
     }
 
     private fun extractVideoId(url: String): String? {
-        // Ex: https://3dporndude.com/video/25857/d-va-lisa-tina-...
         return Regex("""/video/(\d+)/""").find(url)?.groupValues?.get(1)
     }
 
     private fun extractFlashvar(script: String, key: String): String? {
-        // Tenta aspas simples
-        val regexSingle = Regex("""$key:\s*'([^']*)'""")
-        regexSingle.find(script)?.let { return it.groupValues[1] }
+        // Tenta aspas simples, aceitando espaços extras e quebras de linha
+        val regexSingle = Regex("""$key\s*:\s*'([^']*)'""", RegexOption.DOT_MATCHES_ALL)
+        regexSingle.find(script)?.let { return it.groupValues[1].trim() }
+
         // Tenta aspas duplas
-        val regexDouble = Regex("""$key:\s*"([^"]*)"""")
-        regexDouble.find(script)?.let { return it.groupValues[1] }
+        val regexDouble = Regex("""$key\s*:\s*"([^"]*)"""", RegexOption.DOT_MATCHES_ALL)
+        regexDouble.find(script)?.let { return it.groupValues[1].trim() }
+
         return null
     }
 }
