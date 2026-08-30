@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.pt.porndude
 
 import eu.kanade.tachiyomi.animesource.AnimeHttpSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SChapter
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -28,16 +29,16 @@ class PornDude : AnimeHttpSource() {
         return GET(url, headers)
     }
 
-    override fun popularAnimeParse(response: Response): MangasPage {
+    override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val mangas = parseVideoCards(document)
+        val animes = parseVideoCards(document)
         val hasNextPage = document.selectFirst("a.next") != null
-        return MangasPage(mangas, hasNextPage)
+        return AnimesPage(animes, hasNextPage)
     }
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
-    override fun latestUpdatesParse(response: Response): MangasPage = popularAnimeParse(response)
+    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -50,12 +51,12 @@ class PornDude : AnimeHttpSource() {
         return GET(url, headers)
     }
 
-    override fun searchAnimeParse(response: Response): MangasPage {
+    override fun searchAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val mangas = parseVideoCards(document)
+        val animes = parseVideoCards(document)
         val hasNextPage = document.selectFirst("a.next") != null ||
             document.select("ul.pagination a[href*='page']").isNotEmpty()
-        return MangasPage(mangas, hasNextPage)
+        return AnimesPage(animes, hasNextPage)
     }
 
     // =========================== Anime Details ============================
@@ -153,8 +154,10 @@ class PornDude : AnimeHttpSource() {
     }
 
     private fun extractFlashvar(script: String, key: String): String? {
+        // Tenta aspas simples
         val regexSingle = Regex("""$key:\s*'([^']*)'""")
         regexSingle.find(script)?.let { return it.groupValues[1] }
+        // Tenta aspas duplas
         val regexDouble = Regex("""$key:\s*"([^"]*)"""")
         regexDouble.find(script)?.let { return it.groupValues[1] }
         return null
