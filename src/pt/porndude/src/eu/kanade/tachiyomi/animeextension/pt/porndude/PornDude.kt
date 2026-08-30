@@ -15,8 +15,8 @@ class PornDude : AnimeHttpSource() {
 
     override val name = "3D Porn Dude"
     override val baseUrl = "https://3dporndude.com"
-    override val lang = "en"
-    override val supportsLatest = true // usaremos o mesmo endpoint para "latest"
+    override val lang = "pt"
+    override val supportsLatest = true
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
@@ -36,13 +36,12 @@ class PornDude : AnimeHttpSource() {
     }
 
     // =============================== Latest ===============================
-    // Pode reutilizar o popular, mas se houver um bloco específico para "latest", ajuste.
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
     override fun latestUpdatesParse(response: Response): MangasPage = popularAnimeParse(response)
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val encodedQuery = query.replace(" ", "+")
+        val encodedQuery = query.trim().replace(" ", "+")
         val url = if (page == 1) {
             "$baseUrl/search/?q=$encodedQuery"
         } else {
@@ -54,8 +53,8 @@ class PornDude : AnimeHttpSource() {
     override fun searchAnimeParse(response: Response): MangasPage {
         val document = response.asJsoup()
         val mangas = parseVideoCards(document)
-        // Ajustar seletor de próxima página conforme o site
-        val hasNextPage = document.selectFirst("a.next") != null || document.select("ul.pagination a[href*='page']").isNotEmpty()
+        val hasNextPage = document.selectFirst("a.next") != null ||
+            document.select("ul.pagination a[href*='page']").isNotEmpty()
         return MangasPage(mangas, hasNextPage)
     }
 
@@ -65,22 +64,19 @@ class PornDude : AnimeHttpSource() {
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(response.request.url.toString())
 
-        // Título: usar <h1> ou meta og:title
         anime.title = document.selectFirst("h1")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")?.trim()
             ?: "Sem título"
 
-        // Thumbnail: usar poster do player ou meta og:image
         anime.thumbnail_url = document.selectFirst("div.fp-poster img")?.attr("src")
             ?: document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: ""
 
-        // Descrição: procurar bloco de descrição (ajustar seletor)
         anime.description = document.selectFirst("div.video-description")?.text()
             ?: document.selectFirst("div.description")?.text()
             ?: ""
 
-        // Gêneros: extrair de flashvars (video_categories) ou links
+        // Gêneros extraídos do flashvars (video_categories)
         val script = document.select("script").firstOrNull { it.html().contains("flashvars") }
         if (script != null) {
             val categories = extractFlashvar(script.html(), "video_categories")
@@ -88,13 +84,13 @@ class PornDude : AnimeHttpSource() {
                 anime.genre = categories.split(",").joinToString(", ") { it.trim() }
             }
         }
-        // Status: completado (é um vídeo único)
+
         anime.status = SAnime.COMPLETED
         return anime
     }
 
     // =========================== Chapter List ============================
-    // Como cada "anime" é um vídeo único, criamos um capítulo com a URL da própria página
+    // Como cada "anime" é um vídeo único, criamos um único capítulo com a URL da própria página
     override fun chapterListParse(response: Response): List<SChapter> {
         val chapter = SChapter.create()
         chapter.setUrlWithoutDomain(response.request.url.toString())
@@ -112,18 +108,17 @@ class PornDude : AnimeHttpSource() {
 
         val videos = mutableListOf<Video>()
 
-        // Mapa de chaves de URL -> chaves de qualidade
         val qualityMap = mapOf(
             "video_url" to "video_url_text",
             "video_alt_url" to "video_alt_url_text",
             "video_alt_url2" to "video_alt_url2_text",
-            "video_alt_url3" to "video_alt_url3_text"
+            "video_alt_url3" to "video_alt_url3_text",
         )
 
         for ((urlKey, qualityKey) in qualityMap) {
             val rawUrl = extractFlashvar(scriptContent, urlKey) ?: continue
             val quality = extractFlashvar(scriptContent, qualityKey) ?: "HD"
-            val videoUrl = rawUrl.replace("&amp;", "&") // decodificar entidades HTML
+            val videoUrl = rawUrl.replace("&amp;", "&")
 
             videos.add(
                 Video(
@@ -132,12 +127,12 @@ class PornDude : AnimeHttpSource() {
                     videoUrl,
                     headers = headers.newBuilder()
                         .add("Referer", response.request.url.toString())
-                        .build()
-                )
+                        .build(),
+                ),
             )
         }
 
-        // Ordenar por qualidade (maior primeiro) – opcional
+        // Ordena por resolução (4K > 1080p > 720p > 480p)
         return videos.sortedByDescending { it.quality.replace("p", "").toIntOrNull() ?: 0 }
     }
 
@@ -158,12 +153,10 @@ class PornDude : AnimeHttpSource() {
     }
 
     private fun extractFlashvar(script: String, key: String): String? {
-        // Tenta aspas simples primeiro
         val regexSingle = Regex("""$key:\s*'([^']*)'""")
         regexSingle.find(script)?.let { return it.groupValues[1] }
-        // Depois aspas duplas
         val regexDouble = Regex("""$key:\s*"([^"]*)"""")
         regexDouble.find(script)?.let { return it.groupValues[1] }
         return null
     }
-                                }
+}
