@@ -200,7 +200,9 @@ class PornDude : AnimeHttpSource() {
                 }
 
                 val videoHeaders = headers.newBuilder()
-                    .add("Referer", pageUrl)
+                    .set("Referer", pageUrl)
+                    .set("Origin", baseUrl)
+                    .set("Accept", "*/*")
                     .build()
 
                 videos.add(Video(url, quality, url, videoHeaders))
@@ -213,7 +215,9 @@ class PornDude : AnimeHttpSource() {
         mp4Regex.findAll(html).forEach { match ->
             val url = match.value.replace("&amp;", "&")
             val videoHeaders = headers.newBuilder()
-                .add("Referer", pageUrl)
+                .set("Referer", pageUrl)
+                .set("Origin", baseUrl)
+                .set("Accept", "*/*")
                 .build()
             videos.add(Video(url, "MP4 Direct", url, videoHeaders))
         }
@@ -230,7 +234,9 @@ class PornDude : AnimeHttpSource() {
                 }
 
                 val videoHeaders = headers.newBuilder()
-                    .add("Referer", pageUrl)
+                    .set("Referer", pageUrl)
+                    .set("Origin", baseUrl)
+                    .set("Accept", "*/*")
                     .build()
                 videos.add(Video(src, "Video", src, videoHeaders))
             }
