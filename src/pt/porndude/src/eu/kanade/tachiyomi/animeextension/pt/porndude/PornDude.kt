@@ -95,13 +95,13 @@ class PornDude : AnimeHttpSource() {
     override fun episodeListParse(response: Response): List<SEpisode> {
         val videoId = extractVideoId(response.request.url.toString())
         val episodeUrl = if (videoId != null) {
-            "$baseUrl/embed/$videoId"  // URL absoluta da embed
+            "$baseUrl/embed/$videoId" // URL absoluta da embed
         } else {
-            response.request.url.toString()  // fallback: página normal
+            response.request.url.toString() // fallback: página normal
         }
 
         val episode = SEpisode.create()
-        episode.setUrlWithoutDomain(episodeUrl.substringAfter(baseUrl))  // relativa
+        episode.setUrlWithoutDomain(episodeUrl.substringAfter(baseUrl)) // relativa
         episode.name = "Vídeo"
         episode.episode_number = 1f
         episode.date_upload = 0L
