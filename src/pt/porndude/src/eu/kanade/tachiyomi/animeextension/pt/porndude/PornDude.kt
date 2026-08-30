@@ -123,7 +123,8 @@ class PornDude : AnimeHttpSource() {
                         if (embedVideos.isNotEmpty()) return embedVideos
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
 
         return emptyList()
@@ -176,7 +177,6 @@ class PornDude : AnimeHttpSource() {
         val videos = mutableListOf<Video>()
         val html = document.html()
 
-        // Regex ajustado para capturar video_url, video_alt_url, video_alt_url2, video_alt_url3
         val pairRegex = Regex("""(video_url|video_alt_url\d*)\s*:\s*['"]([^'"]+)['"]""")
         val textRegex = Regex("""(video_url_text|video_alt_url\d*_text)\s*:\s*['"]([^'"]+)['"]""")
 
@@ -209,7 +209,6 @@ class PornDude : AnimeHttpSource() {
 
         if (videos.isNotEmpty()) return videos.distinctBy { it.url }
 
-        // Fallback: busca direta por links .mp4
         val mp4Regex = Regex("""https?://[^\s"'<>]+?\.mp4[^\s"'<>]*""")
         mp4Regex.findAll(html).forEach { match ->
             val url = match.value.replace("&amp;", "&")
@@ -221,12 +220,14 @@ class PornDude : AnimeHttpSource() {
 
         if (videos.isNotEmpty()) return videos.distinctBy { it.url }
 
-        // Fallback: tags <video>
         document.select("video source, video").forEach { element ->
             var src = element.attr("src").ifBlank { element.attr("data-src") }
             if (src.isNotBlank()) {
-                if (src.startsWith("//")) src = "https:$src"
-                else if (src.startsWith("/")) src = "$baseUrl$src"
+                if (src.startsWith("//")) {
+                    src = "https:$src"
+                } else if (src.startsWith("/")) {
+                    src = "$baseUrl$src"
+                }
 
                 val videoHeaders = headers.newBuilder()
                     .add("Referer", pageUrl)
