@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -18,6 +19,10 @@ class PornDude : AnimeHttpSource() {
     override val baseUrl = "https://3dporndude.com"
     override val lang = "pt"
     override val supportsLatest = true
+
+    override fun headersBuilder(): Headers.Builder = Headers.Builder()
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .add("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
@@ -76,7 +81,7 @@ class PornDude : AnimeHttpSource() {
 
         anime.description = extractDescription(document)
 
-        val script = document.select("script").firstOrNull { it.html().contains("flashvars") }
+        val script = document.select("script").firstOrNull { it.html().contains("flashvars") || it.html().contains("video_url") }
         if (script != null) {
             val categories = extractFlashvar(script.html(), "video_categories")
             if (!categories.isNullOrBlank()) {
@@ -90,41 +95,36 @@ class PornDude : AnimeHttpSource() {
 
     // =========================== Episode List ============================
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val videoId = extractVideoId(response.request.url.toString())
-        val episodeUrl = if (videoId != null) {
-            "$baseUrl/embed/$videoId"
-        } else {
-            response.request.url.toString()
+        val episode = SEpisode.create().apply {
+            setUrlWithoutDomain(response.request.url.toString())
+            name = "Vídeo"
+            episode_number = 1f
+            date_upload = 0L
         }
-
-        val episode = SEpisode.create()
-        episode.setUrlWithoutDomain(episodeUrl)
-        episode.name = "Vídeo"
-        episode.episode_number = 1f
-        episode.date_upload = 0L
         return listOf(episode)
     }
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val videos = extractVideosFromDocument(document, response.request.url.toString())
+        val pageUrl = response.request.url.toString()
+
+        val videos = extractVideosFromDocument(document, pageUrl)
         if (videos.isNotEmpty()) return videos
 
-        val videoId = extractVideoId(response.request.url.toString())
+        // Tenta buscar no embed caso a página principal não tenha retornado os links
+        val videoId = extractVideoId(pageUrl)
         if (videoId != null) {
-            val normalUrl = "$baseUrl/video/$videoId/"
-            val normalDoc = try {
-                client.newCall(GET(normalUrl, headers)).execute().use { resp ->
-                    if (resp.isSuccessful) resp.asJsoup() else null
+            val embedUrl = "$baseUrl/embed/$videoId"
+            try {
+                client.newCall(GET(embedUrl, headers)).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val embedDoc = resp.asJsoup()
+                        val embedVideos = extractVideosFromDocument(embedDoc, embedUrl)
+                        if (embedVideos.isNotEmpty()) return embedVideos
+                    }
                 }
-            } catch (e: Exception) {
-                null
-            }
-            if (normalDoc != null) {
-                val normalVideos = extractVideosFromDocument(normalDoc, normalUrl)
-                if (normalVideos.isNotEmpty()) return normalVideos
-            }
+            } catch (_: Exception) {}
         }
 
         return emptyList()
@@ -141,7 +141,6 @@ class PornDude : AnimeHttpSource() {
 
             SAnime.create().apply {
                 this.title = title
-                // Correção principal: extrai e define apenas o caminho relativo
                 this.setUrlWithoutDomain(href)
                 this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
             }
@@ -175,61 +174,72 @@ class PornDude : AnimeHttpSource() {
     }
 
     private fun extractVideosFromDocument(document: Document, pageUrl: String): List<Video> {
-        val script = document.select("script").firstOrNull { it.html().contains("flashvars") }
-        if (script != null) {
-            val scriptContent = script.html()
-            val videos = mutableListOf<Video>()
+        val videos = mutableListOf<Video>()
+        val html = document.html()
 
-            val qualityMap = mapOf(
-                "video_url" to "video_url_text",
-                "video_alt_url" to "video_alt_url_text",
-                "video_alt_url2" to "video_alt_url2_text",
-                "video_alt_url3" to "video_alt_url3_text",
-            )
+        // 1. Regex para extrair do player do KVS (kt_player / flashvars)
+        val kvsRegex = Regex("""['"]?(video_url(?:_alt\d*)?)['"]?\s*:\s*['"]([^'"]+)['"]""")
+        val qualityRegex = Regex("""['"]?(video_url(?:_alt\d*)?_text)['"]?\s*:\s*['"]([^'"]+)['"]""")
 
-            for ((urlKey, qualityKey) in qualityMap) {
-                val rawUrl = extractFlashvar(scriptContent, urlKey) ?: continue
-                val quality = extractFlashvar(scriptContent, qualityKey) ?: "HD"
-                val videoUrl = rawUrl.replace("&amp;", "&")
+        val qualityMap = qualityRegex.findAll(html).associate {
+            it.groupValues[1].replace("_text", "") to it.groupValues[2]
+        }
 
-                videos.add(
-                    Video(
-                        videoUrl,
-                        quality,
-                        videoUrl,
-                        headers = headers.newBuilder()
-                            .add("Referer", pageUrl)
-                            .build(),
-                    ),
-                )
-            }
+        kvsRegex.findAll(html).forEach { match ->
+            val key = match.groupValues[1]
+            var url = match.groupValues[2].replace("&amp;", "&").trim()
 
-            if (videos.isNotEmpty()) {
-                return videos.sortedByDescending { it.quality.replace("p", "").toIntOrNull() ?: 0 }
+            if (url.isNotBlank() && !url.startsWith("function")) {
+                if (url.startsWith("//")) url = "https:$url"
+                else if (url.startsWith("/")) url = "$baseUrl$url"
+
+                val quality = qualityMap[key] ?: when {
+                    "1080" in url -> "1080p"
+                    "720" in url -> "720p"
+                    "480" in url -> "480p"
+                    "360" in url -> "360p"
+                    else -> "HD"
+                }
+
+                val videoHeaders = headers.newBuilder()
+                    .add("Referer", pageUrl)
+                    .build()
+
+                videos.add(Video(url, quality, url, videoHeaders))
             }
         }
 
-        val videoTags = document.select("video, video source")
-        for (tag in videoTags) {
-            val src = tag.attr("src")
+        if (videos.isNotEmpty()) return videos.distinctBy { it.url }
+
+        // 2. Fallback: captura direta de arquivos .mp4
+        val mp4Regex = Regex("""https?://[^\s"'<>]+?\.mp4[^\s"'<>]*""")
+        mp4Regex.findAll(html).forEach { match ->
+            val url = match.value.replace("&amp;", "&")
+            val videoHeaders = headers.newBuilder()
+                .add("Referer", pageUrl)
+                .build()
+            videos.add(Video(url, "MP4 Direct", url, videoHeaders))
+        }
+
+        if (videos.isNotEmpty()) return videos.distinctBy { it.url }
+
+        // 3. Fallback: tags <video> e <source>
+        document.select("video source, video").forEach { element ->
+            var src = element.attr("src").ifBlank { element.attr("data-src") }
             if (src.isNotBlank()) {
-                return listOf(
-                    Video(
-                        src,
-                        "Video",
-                        src,
-                        headers = headers.newBuilder()
-                            .add("Referer", pageUrl)
-                            .build(),
-                    ),
-                )
+                if (src.startsWith("//")) src = "https:$src"
+                else if (src.startsWith("/")) src = "$baseUrl$src"
+
+                val videoHeaders = headers.newBuilder()
+                    .add("Referer", pageUrl)
+                    .build()
+                videos.add(Video(src, "Video", src, videoHeaders))
             }
         }
 
-        return emptyList()
+        return videos.distinctBy { it.url }
     }
 
-    // Atualizado para reconhecer IDs tanto de /video/ quanto de /embed/
     private fun extractVideoId(url: String): String? = Regex("""/(?:video|embed)/(\d+)""").find(url)?.groupValues?.get(1)
 
     private fun extractFlashvar(script: String, key: String): String? {
