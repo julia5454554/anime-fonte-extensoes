@@ -142,7 +142,7 @@ class PornDude : AnimeHttpSource() {
                 ?: element.selectFirst("img")?.attr("src")
             SAnime.create().apply {
                 this.title = title
-                this.url = url  // URL completa é aceita pelo framework, mas setUrlWithoutDomain seria mais seguro se convertermos
+                this.url = url // URL completa é aceita pelo framework, mas setUrlWithoutDomain seria mais seguro se convertermos
                 this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
             }
         }
@@ -205,9 +205,7 @@ class PornDude : AnimeHttpSource() {
         return emptyList()
     }
 
-    private fun extractVideoId(url: String): String? {
-        return Regex("""/video/(\d+)/""").find(url)?.groupValues?.get(1)
-    }
+    private fun extractVideoId(url: String): String? = Regex("""/video/(\d+)/""").find(url)?.groupValues?.get(1)
 
     private fun extractFlashvar(script: String, key: String): String? {
         // Tenta aspas simples, aceitando espaços extras e quebras de linha
