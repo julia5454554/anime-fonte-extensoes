@@ -75,6 +75,8 @@ class PornDude : AnimeHttpSource() {
 
         anime.description = document.selectFirst("div.video-description")?.text()
             ?: document.selectFirst("div.description")?.text()
+            ?: document.selectFirst("meta[name='description']")?.attr("content")
+            ?: document.selectFirst("meta[property='og:description']")?.attr("content")
             ?: ""
 
         // Gêneros extraídos do flashvars (video_categories)
@@ -103,6 +105,39 @@ class PornDude : AnimeHttpSource() {
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
+        val videos = extractVideosFromDocument(document)
+        if (videos.isNotEmpty()) return videos
+
+        // Fallback: tentar página de embed
+        val videoId = extractVideoId(response.request.url.toString())
+        if (videoId != null) {
+            val embedUrl = "$baseUrl/embed/$videoId"
+            val embedResponse = client.newCall(GET(embedUrl, headers)).execute()
+            if (embedResponse.isSuccessful) {
+                val embedDoc = embedResponse.asJsoup()
+                return extractVideosFromDocument(embedDoc)
+            }
+        }
+        return emptyList()
+    }
+
+    // ============================= Utilities ==============================
+    private fun parseVideoCards(document: Document): List<SAnime> {
+        return document.select("div.thumb-itm").mapNotNull { element ->
+            val link = element.selectFirst("a[href*='/video/']") ?: return@mapNotNull null
+            val title = link.attr("title").trim()
+            val url = link.attr("href").substringBefore("?")
+            val thumbnail = element.selectFirst("img")?.attr("data-webp")
+                ?: element.selectFirst("img")?.attr("src")
+            SAnime.create().apply {
+                this.title = title
+                this.url = url
+                this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
+            }
+        }
+    }
+
+    private fun extractVideosFromDocument(document: Document): List<Video> {
         val script = document.select("script").firstOrNull { it.html().contains("flashvars") }
             ?: return emptyList()
         val scriptContent = script.html()
@@ -127,7 +162,7 @@ class PornDude : AnimeHttpSource() {
                     quality,
                     videoUrl,
                     headers = headers.newBuilder()
-                        .add("Referer", response.request.url.toString())
+                        .add("Referer", document.location())
                         .build(),
                 ),
             )
@@ -137,20 +172,9 @@ class PornDude : AnimeHttpSource() {
         return videos.sortedByDescending { it.quality.replace("p", "").toIntOrNull() ?: 0 }
     }
 
-    // ============================= Utilities ==============================
-    private fun parseVideoCards(document: Document): List<SAnime> {
-        return document.select("div.thumb-itm").mapNotNull { element ->
-            val link = element.selectFirst("a[href*='/video/']") ?: return@mapNotNull null
-            val title = link.attr("title").trim()
-            val url = link.attr("href").substringBefore("?")
-            val thumbnail = element.selectFirst("img")?.attr("data-webp")
-                ?: element.selectFirst("img")?.attr("src")
-            SAnime.create().apply {
-                this.title = title
-                this.url = url
-                this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
-            }
-        }
+    private fun extractVideoId(url: String): String? {
+        // Ex: https://3dporndude.com/video/25857/d-va-lisa-tina-...
+        return Regex("""/video/(\d+)/""").find(url)?.groupValues?.get(1)
     }
 
     private fun extractFlashvar(script: String, key: String): String? {
