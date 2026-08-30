@@ -20,21 +20,34 @@ class Porcore : AnimeHttpSource() {
     override val lang = "pt"
     override val supportsLatest = true
 
+    private val lastPageUrls = HashSet<String>()
+
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
-        val url = if (page == 1) baseUrl else "$baseUrl?page=$page"
+        val url = if (page == 1) baseUrl else "$baseUrl/?ajax&p=$page"
         return GET(url, headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animes = parseVideoCards(document)
-        val hasNextPage = document.selectFirst("a.next") != null || animes.isNotEmpty()
-        return AnimesPage(animes, hasNextPage)
+
+        if (animes.isEmpty()) {
+            return AnimesPage(emptyList(), false)
+        }
+
+        val currentUrls = animes.map { it.url }.toSet()
+        if (currentUrls.isNotEmpty() && lastPageUrls.containsAll(currentUrls)) {
+            return AnimesPage(emptyList(), false)
+        }
+        lastPageUrls.clear()
+        lastPageUrls.addAll(currentUrls)
+
+        return AnimesPage(animes, true)
     }
 
     // =============================== Latest ===============================
@@ -45,9 +58,9 @@ class Porcore : AnimeHttpSource() {
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val encodedQuery = query.trim().replace(" ", "+")
         val url = if (page == 1) {
-            "$baseUrl/search?q=$encodedQuery"
+            "$baseUrl/?q=$encodedQuery"
         } else {
-            "$baseUrl/search?q=$encodedQuery&page=$page"
+            "$baseUrl/?ajax&p=$page&q=$encodedQuery"
         }
         return GET(url, headers)
     }
@@ -55,8 +68,19 @@ class Porcore : AnimeHttpSource() {
     override fun searchAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animes = parseVideoCards(document)
-        val hasNextPage = document.selectFirst("a.next") != null || animes.isNotEmpty()
-        return AnimesPage(animes, hasNextPage)
+
+        if (animes.isEmpty()) {
+            return AnimesPage(emptyList(), false)
+        }
+
+        val currentUrls = animes.map { it.url }.toSet()
+        if (currentUrls.isNotEmpty() && lastPageUrls.containsAll(currentUrls)) {
+            return AnimesPage(emptyList(), false)
+        }
+        lastPageUrls.clear()
+        lastPageUrls.addAll(currentUrls)
+
+        return AnimesPage(animes, true)
     }
 
     // =========================== Anime Details ============================
