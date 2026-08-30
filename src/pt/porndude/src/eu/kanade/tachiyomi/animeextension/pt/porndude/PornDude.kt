@@ -98,13 +98,19 @@ class PornDude : AnimeHttpSource() {
         val episode = SEpisode.create()
         episode.setUrlWithoutDomain(response.request.url.toString())
         episode.name = "Vídeo"
+        episode.episode_number = 1f   // ← ADICIONADO
         episode.date_upload = 0L
         return listOf(episode)
     }
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
-        // Tenta primeiro a página embed, que não tem anúncio
+        // Tenta primeiro a página original (contém flashvars)
+        val document = response.asJsoup()
+        val videos = extractVideosFromDocument(document, response.request.url.toString())
+        if (videos.isNotEmpty()) return videos
+
+        // Fallback: tenta a página embed
         val videoId = extractVideoId(response.request.url.toString())
         if (videoId != null) {
             val embedUrl = "$baseUrl/embed/$videoId"
@@ -117,14 +123,11 @@ class PornDude : AnimeHttpSource() {
             }
 
             if (embedDoc != null) {
-                val videos = extractVideosFromDocument(embedDoc, embedUrl)
-                if (videos.isNotEmpty()) return videos
+                return extractVideosFromDocument(embedDoc, embedUrl)
             }
         }
 
-        // Fallback: tenta a página original
-        val document = response.asJsoup()
-        return extractVideosFromDocument(document, response.request.url.toString())
+        return emptyList()
     }
 
     // ============================= Utilities ==============================
