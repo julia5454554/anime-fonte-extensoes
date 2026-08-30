@@ -121,7 +121,7 @@ class Porcore : AnimeHttpSource() {
             "div.post-content",
             "div.well",
             "meta[name='description']",
-            "meta[property='og:description']"
+            "meta[property='og:description']",
         )
         for (selector in selectors) {
             val element = document.selectFirst(selector)
@@ -141,15 +141,17 @@ class Porcore : AnimeHttpSource() {
     private fun extractVideosFromDocument(document: Document, pageUrl: String): List<Video> {
         val videos = mutableListOf<Video>()
 
-        // 1) Procurar tag <source> dentro do player Video.js
         val source = document.selectFirst("video#currentvideo_html5_api source[src]")
             ?: document.selectFirst("div.video-player source[src]")
             ?: document.selectFirst("video source[src]")
 
         if (source != null) {
             var src = source.attr("src").trim()
-            if (src.startsWith("//")) src = "https:$src"
-            else if (src.startsWith("/")) src = "$baseUrl$src"
+            if (src.startsWith("//")) {
+                src = "https:$src"
+            } else if (src.startsWith("/")) {
+                src = "$baseUrl$src"
+            }
 
             val videoHeaders = headers.newBuilder()
                 .set("Referer", pageUrl)
@@ -160,12 +162,14 @@ class Porcore : AnimeHttpSource() {
             videos.add(Video(src, quality, src, videoHeaders))
         }
 
-        // 2) Fallback: procurar <video> com src direto
         if (videos.isEmpty()) {
             document.select("video[src]").forEach { element ->
                 var src = element.attr("src").trim()
-                if (src.startsWith("//")) src = "https:$src"
-                else if (src.startsWith("/")) src = "$baseUrl$src"
+                if (src.startsWith("//")) {
+                    src = "https:$src"
+                } else if (src.startsWith("/")) {
+                    src = "$baseUrl$src"
+                }
 
                 val videoHeaders = headers.newBuilder()
                     .set("Referer", pageUrl)
@@ -177,7 +181,6 @@ class Porcore : AnimeHttpSource() {
             }
         }
 
-        // 3) Fallback: regex para .m3u8 ou .mp4
         if (videos.isEmpty()) {
             val mediaRegex = Regex("""https?://[^\s"'<>]+?\.(?:m3u8|mp4)[^\s"'<>]*""")
             mediaRegex.findAll(document.html()).forEach { match ->
