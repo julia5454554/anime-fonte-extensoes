@@ -112,7 +112,9 @@ class PornDude : AnimeHttpSource() {
                 client.newCall(GET(embedUrl, headers)).execute().use { resp ->
                     if (resp.isSuccessful) resp.asJsoup() else null
                 }
-            } catch (e: Exception) { null }
+            } catch (e: Exception) {
+                null
+            }
 
             if (embedDoc != null) {
                 val videos = extractVideosFromDocument(embedDoc, embedUrl)
