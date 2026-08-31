@@ -118,9 +118,9 @@ class HardGif : AnimeHttpSource() {
                 for (element in elements) {
                     val link = element.selectFirst("a[href]") ?: continue
                     val absUrl = link.absUrl("href")
-                    
+
                     if (absUrl.isBlank() || absUrl == baseUrl || absUrl == "$baseUrl/") continue
-                    
+
                     val title = link.attr("title").ifBlank { link.text() }.trim()
                     val img = element.selectFirst("img")
                     val thumbnail = img?.absUrl("data-src")?.ifEmpty { img.absUrl("src") } ?: ""
