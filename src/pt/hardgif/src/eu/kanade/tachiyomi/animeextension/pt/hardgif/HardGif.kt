@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
@@ -21,61 +22,44 @@ class HardGif : AnimeHttpSource() {
     override val lang = "pt"
     override val supportsLatest = true
 
-    private val lastPageUrls = HashSet<String>()
-
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
-        .add("Cookie", "age_ok=1; age_verified=1") // cookies para pular verificação
+        .add("Cookie", "age_ok=1; age_verified=1")
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
-        val url = if (page == 1) baseUrl else "$baseUrl/?ajax&p=$page"
+        val url = if (page > 1) "$baseUrl/popular/page/$page/" else "$baseUrl/popular/"
         return GET(url, headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animes = parseCards(document)
-
-        if (animes.isEmpty()) {
-            val retryDoc = fetchWithAgeCookie(response.request.url.toString())
-            if (retryDoc != null) {
-                return AnimesPage(parseCards(retryDoc), parseCards(retryDoc).isNotEmpty())
-            }
-            return AnimesPage(emptyList(), false)
-        }
-
-        val currentUrls = animes.map { it.url }.toSet()
-        if (currentUrls.isNotEmpty() && lastPageUrls.containsAll(currentUrls)) {
-            return AnimesPage(emptyList(), false)
-        }
-        lastPageUrls.clear()
-        lastPageUrls.addAll(currentUrls)
-
-        return AnimesPage(animes, true)
+        return AnimesPage(animes, animes.isNotEmpty())
     }
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
+    override fun latestUpdatesRequest(page: Int): Request {
+        val url = if (page > 1) "$baseUrl/page/$page/" else "$baseUrl/"
+        return GET(url, headers)
+    }
+
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val encodedQuery = query.trim().replace(" ", "+")
-        val url = if (page == 1) {
-            "$baseUrl/?search=$encodedQuery"
-        } else {
-            "$baseUrl/?search=$encodedQuery&ajax&p=$page"
+        val urlBuilder = baseUrl.toHttpUrl().newBuilder()
+        if (page > 1) {
+            urlBuilder.addPathSegment("page")
+            urlBuilder.addPathSegment(page.toString())
+            urlBuilder.addPathSegment("")
         }
-        return GET(url, headers)
+        urlBuilder.addQueryParameter("s", query.trim())
+        return GET(urlBuilder.build().toString(), headers)
     }
 
-    override fun searchAnimeParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
-        val animes = parseCards(document)
-        return AnimesPage(animes, animes.isNotEmpty())
-    }
+    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(response: Response): SAnime {
@@ -117,45 +101,36 @@ class HardGif : AnimeHttpSource() {
     }
 
     // ============================= Utilities ==============================
-    private fun fetchWithAgeCookie(url: String): Document? = try {
-        val request = GET(url, headers.newBuilder().set("Cookie", "age_ok=1; age_verified=1").build())
-        client.newCall(request).execute().use { resp ->
-            if (resp.isSuccessful) resp.asJsoup() else null
-        }
-    } catch (_: Exception) {
-        null
-    }
-
     private fun parseCards(document: Document): List<SAnime> {
         val animes = mutableListOf<SAnime>()
-
         val containerSelectors = listOf(
             "div.video-card",
-            "div.card.video-card",
+            "div.card",
             "div.thumb",
             "div.item",
             "article",
+            "div.post",
         )
 
         for (selector in containerSelectors) {
             val elements = document.select(selector)
             if (elements.isNotEmpty()) {
                 for (element in elements) {
-                    val link = element.selectFirst("a[href*='/gif/']")
-                        ?: element.selectFirst("a[href^='/gif/']")
-                        ?: continue
+                    val link = element.selectFirst("a[href]") ?: continue
+                    val absUrl = link.absUrl("href")
+                    
+                    if (absUrl.isBlank() || absUrl == baseUrl || absUrl == "$baseUrl/") continue
+                    
+                    val title = link.attr("title").ifBlank { link.text() }.trim()
+                    val img = element.selectFirst("img")
+                    val thumbnail = img?.absUrl("data-src")?.ifEmpty { img.absUrl("src") } ?: ""
 
-                    val title = link.attr("title").ifBlank { link.text().trim() }
-                    val href = link.attr("href")
-                    val thumbnail = element.selectFirst("img")?.attr("src")
-                        ?: element.selectFirst("img")?.attr("data-src")
-
-                    if (title.isNotBlank() && href.startsWith("/gif/")) {
+                    if (title.isNotBlank()) {
                         animes.add(
                             SAnime.create().apply {
                                 this.title = title
-                                this.setUrlWithoutDomain(href)
-                                this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
+                                this.setUrlWithoutDomain(absUrl)
+                                this.thumbnail_url = thumbnail
                             },
                         )
                     }
@@ -165,18 +140,18 @@ class HardGif : AnimeHttpSource() {
         }
 
         if (animes.isEmpty()) {
-            document.select("a[href*='/gif/']").forEach { link ->
-                val title = link.attr("title").ifBlank { link.text().trim() }
-                val href = link.attr("href")
+            document.select("a[href*='/gif/'], a[href*='/video/'], a[href*='/g/']").forEach { link ->
+                val absUrl = link.absUrl("href")
+                val title = link.attr("title").ifBlank { link.text() }.trim()
                 val img = link.selectFirst("img")
-                val thumbnail = img?.attr("src") ?: img?.attr("data-src")
+                val thumbnail = img?.absUrl("data-src")?.ifEmpty { img.absUrl("src") } ?: ""
 
-                if (title.isNotBlank() && href.startsWith("/gif/")) {
+                if (title.isNotBlank() && absUrl.isNotBlank()) {
                     animes.add(
                         SAnime.create().apply {
                             this.title = title
-                            this.setUrlWithoutDomain(href)
-                            this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
+                            this.setUrlWithoutDomain(absUrl)
+                            this.thumbnail_url = thumbnail
                         },
                     )
                 }
