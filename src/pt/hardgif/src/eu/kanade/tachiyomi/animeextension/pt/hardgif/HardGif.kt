@@ -64,16 +64,34 @@ class HardGif : AnimeHttpSource() {
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(response.request.url.toString())
 
-        anime.title = document.selectFirst("h1")?.text()?.trim()
-            ?: document.selectFirst("meta[property='og:title']")?.attr("content")?.trim()
+        anime.title = document.selectFirst("h6.video_name a")?.text()?.trim()
             ?: document.selectFirst("h6.video_name")?.text()?.trim()
+            ?: document.selectFirst("h1")?.text()?.trim()
+            ?: document.selectFirst("meta[property='og:title']")?.attr("content")?.trim()
             ?: "Sem título"
 
-        anime.thumbnail_url = document.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: document.selectFirst("div.vjs-poster")?.attr("style")
-                ?.substringAfter("url(\"")?.substringBefore("\")")
-            ?: ""
+        var thumbnail = ""
+        val videoContainer = document.selectFirst("[data-screenshots]")
+        if (videoContainer != null) {
+            val screenshotsData = videoContainer.attr("data-screenshots")
+            if (screenshotsData.isNotBlank()) {
+                try {
+                    val jsonArr = JSONArray(screenshotsData)
+                    if (jsonArr.length() > 0) {
+                        thumbnail = jsonArr.getString(0)
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
 
+        if (thumbnail.isBlank()) {
+            val style = document.selectFirst("div.vjs-poster")?.attr("style") ?: ""
+            thumbnail = style.substringAfter("url(\"").substringBefore("\")")
+                .ifEmpty { document.selectFirst("meta[property='og:image']")?.attr("content") ?: "" }
+        }
+
+        anime.thumbnail_url = thumbnail
         anime.description = extractDescription(document)
         anime.status = SAnime.COMPLETED
         return anime
@@ -94,89 +112,6 @@ class HardGif : AnimeHttpSource() {
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val pageUrl = response.request.url.toString()
-        return extractVideosFromDocument(document, pageUrl)
-    }
-
-    // ============================= Utilities ==============================
-    private fun parseCards(document: Document): List<SAnime> {
-        val animes = mutableListOf<SAnime>()
-        val elements = document.select("a:has(img), div.video-card a, div.card a, article a, div.item a")
-
-        for (link in elements) {
-            val absUrl = link.absUrl("href")
-            if (absUrl.isBlank() || absUrl == baseUrl || absUrl == "$baseUrl/" || absUrl.contains("/page/")) continue
-
-            val img = link.selectFirst("img") ?: link.parent()?.selectFirst("img")
-            val thumbnail = img?.absUrl("data-src")
-                ?.ifEmpty { img.absUrl("src") }
-                ?.ifEmpty { img.absUrl("data-lazy-src") }
-                ?: ""
-
-            val title = link.attr("title")
-                .ifBlank { img?.attr("alt") }
-                .ifBlank { link.text() }
-                .trim()
-
-            if (title.isNotBlank()) {
-                animes.add(
-                    SAnime.create().apply {
-                        this.title = title
-                        this.setUrlWithoutDomain(absUrl)
-                        this.thumbnail_url = thumbnail
-                    },
-                )
-            }
-        }
-
-        if (animes.isEmpty()) {
-            document.select("a[href]").forEach { link ->
-                val absUrl = link.absUrl("href")
-                if (absUrl.isNotBlank() && absUrl != baseUrl && absUrl != "$baseUrl/" && !absUrl.contains("/page/")) {
-                    val img = link.selectFirst("img")
-                    val thumbnail = img?.absUrl("data-src")?.ifEmpty { img.absUrl("src") } ?: ""
-                    val title = link.attr("title").ifBlank { img?.attr("alt") }.ifBlank { link.text() }.trim()
-
-                    if (title.isNotBlank() && title.length > 2) {
-                        animes.add(
-                            SAnime.create().apply {
-                                this.title = title
-                                this.setUrlWithoutDomain(absUrl)
-                                this.thumbnail_url = thumbnail
-                            },
-                        )
-                    }
-                }
-            }
-        }
-
-        return animes.distinctBy { it.url }
-    }
-
-    private fun extractDescription(document: Document): String {
-        val selectors = listOf(
-            "div.video-description",
-            "div.description",
-            "div.entry-content",
-            "div.card-body p",
-            "meta[name='description']",
-            "meta[property='og:description']",
-        )
-        for (selector in selectors) {
-            val element = document.selectFirst(selector)
-            if (element != null) {
-                if (element.tagName() == "meta") {
-                    val content = element.attr("content").trim()
-                    if (content.isNotBlank()) return content
-                } else {
-                    val text = element.text().trim()
-                    if (text.isNotBlank()) return text
-                }
-            }
-        }
-        return ""
-    }
-
-    private fun extractVideosFromDocument(document: Document, pageUrl: String): List<Video> {
         val videos = mutableListOf<Video>()
 
         val videoContainer = document.selectFirst("[data-videos]")
@@ -194,8 +129,12 @@ class HardGif : AnimeHttpSource() {
                                 .set("Referer", pageUrl)
                                 .set("Accept", "*/*")
                                 .build()
-                            val quality = if (format.contains("hls")) "HLS" else "Video"
-                            videos.add(Video(url, quality, url, videoHeaders))
+                            val label = if (jsonArray.length() > 1) {
+                                "Opção ${i + 1} (${if (format.contains("hls")) "HLS" else "MP4"})"
+                            } else {
+                                if (format.contains("hls")) "HLS" else "Video"
+                            }
+                            videos.add(Video(url, label, url, videoHeaders))
                         }
                     }
                 } catch (_: Exception) {
@@ -205,13 +144,13 @@ class HardGif : AnimeHttpSource() {
 
         if (videos.isEmpty()) {
             val hlsRegex = Regex("""https?://[^\s"'<>]+?\.m3u8[^\s"'<>]*""")
-            hlsRegex.findAll(document.html()).forEach { match ->
+            hlsRegex.findAll(document.html()).forEachIndexed { index, match ->
                 val url = match.value.replace("&amp;", "&")
                 val videoHeaders = headers.newBuilder()
                     .set("Referer", pageUrl)
                     .set("Accept", "*/*")
                     .build()
-                videos.add(Video(url, "HLS", url, videoHeaders))
+                videos.add(Video(url, "HLS Opção ${index + 1}", url, videoHeaders))
             }
         }
 
@@ -236,4 +175,93 @@ class HardGif : AnimeHttpSource() {
 
         return videos.distinctBy { it.url }
     }
-}
+
+    // ============================= Utilities ==============================
+    private fun parseCards(document: Document): List<SAnime> {
+        val animes = mutableListOf<SAnime>()
+        val cards = document.select("div.video-card, div.card, article, div.item")
+
+        for (card in cards) {
+            val link = card.selectFirst("h6.video_name a, .card-title a, a[href*='/gif/'], a[href*='/video/']")
+                ?: card.selectFirst("a[href]")
+                ?: continue
+
+            val absUrl = link.absUrl("href")
+            if (absUrl.isBlank() || absUrl == baseUrl || absUrl == "$baseUrl/" || absUrl.contains("/page/")) continue
+
+            val title = link.text().trim().ifEmpty { link.attr("title").trim() }
+            if (title.isBlank()) continue
+
+            var thumbnail = ""
+            val videoContainer = card.selectFirst("[data-screenshots]")
+            if (videoContainer != null) {
+                val screenshotsData = videoContainer.attr("data-screenshots")
+                if (screenshotsData.isNotBlank()) {
+                    try {
+                        val jsonArr = JSONArray(screenshotsData)
+                        if (jsonArr.length() > 0) {
+                            thumbnail = jsonArr.getString(0)
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+
+            if (thumbnail.isBlank()) {
+                val poster = card.selectFirst("div.vjs-poster")
+                if (poster != null) {
+                    val style = poster.attr("style")
+                    thumbnail = style.substringAfter("url(\"").substringBefore("\")")
+                        .substringAfter("url('").substringBefore("')")
+                }
+            }
+
+            if (thumbnail.isBlank()) {
+                val img = card.selectFirst("img")
+                thumbnail = img?.absUrl("data-src")
+                    ?.ifEmpty { img.absUrl("src") }
+                    ?.ifEmpty { img.absUrl("data-lazy-src") }
+                    ?: ""
+            }
+
+            animes.add(
+                SAnime.create().apply {
+                    this.title = title
+                    this.setUrlWithoutDomain(absUrl)
+                    this.thumbnail_url = thumbnail
+                },
+            )
+        }
+
+        if (animes.isEmpty()) {
+            document.select("a[href*='/gif/'], a[href*='/video/']").forEach { link ->
+                val absUrl = link.absUrl("href")
+                val title = link.text().trim().ifEmpty { link.attr("title").trim() }
+                val img = link.selectFirst("img")
+                val thumbnail = img?.absUrl("data-src")?.ifEmpty { img.absUrl("src") } ?: ""
+
+                if (title.isNotBlank() && absUrl.isNotBlank()) {
+                    animes.add(
+                        SAnime.create().apply {
+                            this.title = title
+                            this.setUrlWithoutDomain(absUrl)
+                            this.thumbnail_url = thumbnail
+                        },
+                    )
+                }
+            }
+        }
+
+        return animes.distinctBy { it.url }
+    }
+
+    private fun extractDescription(document: Document): String {
+        val selectors = listOf(
+            "div.video-description",
+            "div.description",
+            "div.entry-content",
+            "div.card-body p",
+            "meta[name='description']",
+            "meta[property='og:description']",
+        )
+        for (selector
