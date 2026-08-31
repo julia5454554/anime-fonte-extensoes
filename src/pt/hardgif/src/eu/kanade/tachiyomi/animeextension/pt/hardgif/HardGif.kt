@@ -26,19 +26,35 @@ class HardGif : AnimeHttpSource() {
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
-        .add("Cookie", "age_ok=1") // cookie para pular verificação de idade
+        .add("Cookie", "age_ok=1; age_verified=1") // cookies para pular verificação
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
-        val url = if (page == 1) baseUrl else "$baseUrl?page=$page"
+        val url = if (page == 1) baseUrl else "$baseUrl/?ajax&p=$page"
         return GET(url, headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animes = parseCards(document)
-        val hasNextPage = animes.isNotEmpty()
-        return AnimesPage(animes, hasNextPage)
+
+        if (animes.isEmpty()) {
+            // Tenta uma segunda requisição com cookie manual se a primeira falhou
+            val retryDoc = fetchWithAgeCookie(response.request.url.toString())
+            if (retryDoc != null) {
+                return AnimesPage(parseCards(retryDoc), parseCards(retryDoc).isNotEmpty())
+            }
+            return AnimesPage(emptyList(), false)
+        }
+
+        val currentUrls = animes.map { it.url }.toSet()
+        if (currentUrls.isNotEmpty() && lastPageUrls.containsAll(currentUrls)) {
+            return AnimesPage(emptyList(), false)
+        }
+        lastPageUrls.clear()
+        lastPageUrls.addAll(currentUrls)
+
+        return AnimesPage(animes, true)
     }
 
     // =============================== Latest ===============================
@@ -51,7 +67,7 @@ class HardGif : AnimeHttpSource() {
         val url = if (page == 1) {
             "$baseUrl/?search=$encodedQuery"
         } else {
-            "$baseUrl/?search=$encodedQuery&page=$page"
+            "$baseUrl/?search=$encodedQuery&ajax&p=$page"
         }
         return GET(url, headers)
     }
@@ -102,20 +118,75 @@ class HardGif : AnimeHttpSource() {
     }
 
     // ============================= Utilities ==============================
-    private fun parseCards(document: Document): List<SAnime> {
-        return document.select("div.video-card").mapNotNull { element ->
-            val link = element.selectFirst("a[href*='/gif/']") ?: return@mapNotNull null
-            val title = link.attr("title").ifBlank { link.text().trim() }
-            val href = link.attr("href")
-            val thumbnail = element.selectFirst("img")?.attr("src")
-                ?: element.selectFirst("img")?.attr("data-src")
+    private fun fetchWithAgeCookie(url: String): Document? {
+        return try {
+            val request = GET(url, headers.newBuilder().set("Cookie", "age_ok=1; age_verified=1").build())
+            client.newCall(request).execute().use { resp ->
+                if (resp.isSuccessful) resp.asJsoup() else null
+            }
+        } catch (_: Exception) { null }
+    }
 
-            SAnime.create().apply {
-                this.title = title
-                this.setUrlWithoutDomain(href)
-                this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
+    private fun parseCards(document: Document): List<SAnime> {
+        val animes = mutableListOf<SAnime>()
+
+        // Tenta vários seletores de contêineres de card
+        val containerSelectors = listOf(
+            "div.video-card",
+            "div.card.video-card",
+            "div.thumb",
+            "div.item",
+            "article",
+        )
+
+        for (selector in containerSelectors) {
+            val elements = document.select(selector)
+            if (elements.isNotEmpty()) {
+                for (element in elements) {
+                    val link = element.selectFirst("a[href*='/gif/']")
+                        ?: element.selectFirst("a[href^='/gif/']")
+                        ?: continue
+
+                    val title = link.attr("title").ifBlank { link.text().trim() }
+                    val href = link.attr("href")
+                    val thumbnail = element.selectFirst("img")?.attr("src")
+                        ?: element.selectFirst("img")?.attr("data-src")
+
+                    if (title.isNotBlank() && href.startsWith("/gif/")) {
+                        animes.add(
+                            SAnime.create().apply {
+                                this.title = title
+                                this.setUrlWithoutDomain(href)
+                                this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
+                            }
+                        )
+                    }
+                }
+                if (animes.isNotEmpty()) break
             }
         }
+
+        // Fallback: procura qualquer link /gif/ na página
+        if (animes.isEmpty()) {
+            document.select("a[href*='/gif/']").forEach { link ->
+                val title = link.attr("title").ifBlank { link.text().trim() }
+                val href = link.attr("href")
+                val img = link.selectFirst("img")
+                val thumbnail = img?.attr("src") ?: img?.attr("data-src")
+
+                if (title.isNotBlank() && href.startsWith("/gif/")) {
+                    animes.add(
+                        SAnime.create().apply {
+                            this.title = title
+                            this.setUrlWithoutDomain(href)
+                            this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
+                        }
+                    )
+                }
+            }
+        }
+
+        return animes.distinctBy { it.url }
     }
 
     private fun extractDescription(document: Document): String {
