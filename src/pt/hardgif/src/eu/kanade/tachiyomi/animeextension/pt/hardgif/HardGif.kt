@@ -9,7 +9,6 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
@@ -22,6 +21,8 @@ class HardGif : AnimeHttpSource() {
     override val lang = "pt"
     override val supportsLatest = true
 
+    private val lastPageUrls = HashSet<String>()
+
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
@@ -29,35 +30,52 @@ class HardGif : AnimeHttpSource() {
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
-        val url = if (page > 1) "$baseUrl/page/$page/" else "$baseUrl/"
+        val url = if (page == 1) baseUrl else "$baseUrl/?ajax&p=$page"
         return GET(url, headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animes = parseCards(document)
-        val hasNextPage = document.select("a.next, .pagination .next, a[href*='/page/']").isNotEmpty() || animes.size >= 10
-        return AnimesPage(animes, hasNextPage)
+
+        if (animes.isEmpty()) {
+            val retryDoc = fetchWithAgeCookie(response.request.url.toString())
+            if (retryDoc != null) {
+                return AnimesPage(parseCards(retryDoc), parseCards(retryDoc).isNotEmpty())
+            }
+            return AnimesPage(emptyList(), false)
+        }
+
+        val currentUrls = animes.map { it.url }.toSet()
+        if (currentUrls.isNotEmpty() && lastPageUrls.containsAll(currentUrls)) {
+            return AnimesPage(emptyList(), false)
+        }
+        lastPageUrls.clear()
+        lastPageUrls.addAll(currentUrls)
+
+        return AnimesPage(animes, true)
     }
 
     // =============================== Latest ===============================
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
-
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val urlBuilder = baseUrl.toHttpUrl().newBuilder()
-        if (page > 1) {
-            urlBuilder.addPathSegment("page")
-            urlBuilder.addPathSegment(page.toString())
-            urlBuilder.addPathSegment("")
+        val encodedQuery = query.trim().replace(" ", "+")
+        val url = if (page == 1) {
+            "$baseUrl/?search=$encodedQuery"
+        } else {
+            "$baseUrl/?search=$encodedQuery&ajax&p=$page"
         }
-        urlBuilder.addQueryParameter("s", query.trim())
-        return GET(urlBuilder.build().toString(), headers)
+        return GET(url, headers)
     }
 
-    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val document = response.asJsoup()
+        val animes = parseCards(document)
+        return AnimesPage(animes, animes.isNotEmpty())
+    }
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(response: Response): SAnime {
@@ -65,35 +83,16 @@ class HardGif : AnimeHttpSource() {
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(response.request.url.toString())
 
-        anime.title = document.selectFirst("h6.video_name a")?.text()?.trim()
-            ?: document.selectFirst("h6.video_name")?.text()?.trim()
-            ?: document.selectFirst("h1")?.text()?.trim()
+        anime.title = document.selectFirst("h1")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")?.trim()
+            ?: document.selectFirst("h6.video_name")?.text()?.trim()
             ?: "Sem título"
 
-        var thumbnail = ""
-        val videoContainer = document.selectFirst("[data-screenshots]")
-        if (videoContainer != null) {
-            val screenshotsData = videoContainer.attr("data-screenshots")
-            if (screenshotsData.isNotBlank()) {
-                try {
-                    val jsonArr = JSONArray(screenshotsData)
-                    if (jsonArr.length() > 0) {
-                        thumbnail = jsonArr.getString(0)
-                    }
-                } catch (_: Exception) {
-                }
-            }
-        }
+        anime.thumbnail_url = document.selectFirst("meta[property='og:image']")?.attr("content")
+            ?: document.selectFirst("div.vjs-poster")?.attr("style")
+                ?.substringAfter("url(\"")?.substringBefore("\")")
+            ?: ""
 
-        if (thumbnail.isBlank()) {
-            val style = document.selectFirst("div.vjs-poster")?.attr("style") ?: ""
-            thumbnail = style.substringAfter("url(\"").substringBefore("\")")
-                .substringAfter("url('").substringBefore("')")
-                .ifEmpty { document.selectFirst("meta[property='og:image']")?.attr("content") ?: "" }
-        }
-
-        anime.thumbnail_url = thumbnail
         anime.description = extractDescription(document)
         anime.status = SAnime.COMPLETED
         return anime
@@ -114,146 +113,70 @@ class HardGif : AnimeHttpSource() {
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val pageUrl = response.request.url.toString()
-        val videos = mutableListOf<Video>()
-
-        val videoContainer = document.selectFirst("[data-videos]")
-        if (videoContainer != null) {
-            val dataVideos = videoContainer.attr("data-videos")
-            if (dataVideos.isNotBlank()) {
-                try {
-                    val jsonArray = JSONArray(dataVideos)
-                    for (i in 0 until jsonArray.length()) {
-                        val obj = jsonArray.getJSONObject(i)
-                        val url = obj.optString("url").replace("\\/", "/")
-                        val format = obj.optString("format", "hls_url")
-                        if (url.isNotBlank() && url.startsWith("http")) {
-                            val videoHeaders = headers.newBuilder()
-                                .removeAll("Referer")
-                                .add("Referer", pageUrl)
-                                .removeAll("Accept")
-                                .add("Accept", "*/*")
-                                .build()
-                            val label = if (jsonArray.length() > 1) {
-                                "Opção ${i + 1} (${if (format.contains("hls")) "HLS" else "MP4"})"
-                            } else {
-                                if (format.contains("hls")) "HLS" else "Video"
-                            }
-                            videos.add(Video(url, label, url, videoHeaders))
-                        }
-                    }
-                } catch (_: Exception) {
-                }
-            }
-        }
-
-        if (videos.isEmpty()) {
-            val hlsRegex = Regex("""https?://[^\s"'<>]+?\.m3u8[^\s"'<>]*""")
-            hlsRegex.findAll(document.html()).forEachIndexed { index, match ->
-                val url = match.value.replace("&amp;", "&")
-                val videoHeaders = headers.newBuilder()
-                    .removeAll("Referer")
-                    .add("Referer", pageUrl)
-                    .removeAll("Accept")
-                    .add("Accept", "*/*")
-                    .build()
-                videos.add(Video(url, "HLS Opção ${index + 1}", url, videoHeaders))
-            }
-        }
-
-        if (videos.isEmpty()) {
-            document.select("video source[src], video[src]").forEach { element ->
-                var src = element.attr("src").trim()
-                if (src.startsWith("//")) {
-                    src = "https:$src"
-                } else if (src.startsWith("/")) {
-                    src = "$baseUrl$src"
-                }
-                if (src.isNotBlank() && !src.startsWith("blob:")) {
-                    val videoHeaders = headers.newBuilder()
-                        .removeAll("Referer")
-                        .add("Referer", pageUrl)
-                        .removeAll("Accept")
-                        .add("Accept", "*/*")
-                        .build()
-                    val quality = if (src.contains(".mp4")) "MP4" else "Video"
-                    videos.add(Video(src, quality, src, videoHeaders))
-                }
-            }
-        }
-
-        return videos.distinctBy { it.url }
+        return extractVideosFromDocument(document, pageUrl)
     }
 
     // ============================= Utilities ==============================
+    private fun fetchWithAgeCookie(url: String): Document? = try {
+        val request = GET(url, headers.newBuilder().set("Cookie", "age_ok=1; age_verified=1").build())
+        client.newCall(request).execute().use { resp ->
+            if (resp.isSuccessful) resp.asJsoup() else null
+        }
+    } catch (_: Exception) {
+        null
+    }
+
     private fun parseCards(document: Document): List<SAnime> {
         val animes = mutableListOf<SAnime>()
-        val cards = document.select("div.video-card, div.card, article, div.item")
 
-        for (card in cards) {
-            val link = card.selectFirst("h6.video_name a, .card-title a, a[href*='/gif/'], a[href*='/video/']")
-                ?: card.selectFirst("a[href]")
-                ?: continue
+        val containerSelectors = listOf(
+            "div.video-card",
+            "div.card.video-card",
+            "div.thumb",
+            "div.item",
+            "article",
+        )
 
-            val absUrl = link.absUrl("href")
-            if (absUrl.isBlank() || absUrl == baseUrl || absUrl == "$baseUrl/" || absUrl.contains("/page/")) continue
+        for (selector in containerSelectors) {
+            val elements = document.select(selector)
+            if (elements.isNotEmpty()) {
+                for (element in elements) {
+                    val link = element.selectFirst("a[href*='/gif/']")
+                        ?: element.selectFirst("a[href^='/gif/']")
+                        ?: continue
 
-            val title = link.text().trim().ifEmpty { link.attr("title").trim() }
-            if (title.isBlank()) continue
+                    val title = link.attr("title").ifBlank { link.text().trim() }
+                    val href = link.attr("href")
+                    val thumbnail = element.selectFirst("img")?.attr("src")
+                        ?: element.selectFirst("img")?.attr("data-src")
 
-            var thumbnail = ""
-            val videoContainer = card.selectFirst("[data-screenshots]")
-            if (videoContainer != null) {
-                val screenshotsData = videoContainer.attr("data-screenshots")
-                if (screenshotsData.isNotBlank()) {
-                    try {
-                        val jsonArr = JSONArray(screenshotsData)
-                        if (jsonArr.length() > 0) {
-                            thumbnail = jsonArr.getString(0)
-                        }
-                    } catch (_: Exception) {
+                    if (title.isNotBlank() && href.startsWith("/gif/")) {
+                        animes.add(
+                            SAnime.create().apply {
+                                this.title = title
+                                this.setUrlWithoutDomain(href)
+                                this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
+                            },
+                        )
                     }
                 }
+                if (animes.isNotEmpty()) break
             }
-
-            if (thumbnail.isBlank()) {
-                val poster = card.selectFirst("div.vjs-poster")
-                if (poster != null) {
-                    val style = poster.attr("style")
-                    thumbnail = style.substringAfter("url(\"").substringBefore("\")")
-                        .substringAfter("url('").substringBefore("')")
-                }
-            }
-
-            if (thumbnail.isBlank()) {
-                val img = card.selectFirst("img")
-                thumbnail = img?.absUrl("data-src")
-                    ?.ifEmpty { img.absUrl("src") }
-                    ?.ifEmpty { img.absUrl("data-lazy-src") }
-                    ?: ""
-            }
-
-            animes.add(
-                SAnime.create().apply {
-                    this.title = title
-                    this.setUrlWithoutDomain(absUrl)
-                    this.thumbnail_url = thumbnail
-                },
-            )
         }
 
         if (animes.isEmpty()) {
-            document.select("a[href*='/gif/'], a[href*='/video/']").forEach { link ->
-                val absUrl = link.absUrl("href")
-                val title = link.text().trim().ifEmpty { link.attr("title").trim() }
+            document.select("a[href*='/gif/']").forEach { link ->
+                val title = link.attr("title").ifBlank { link.text().trim() }
+                val href = link.attr("href")
                 val img = link.selectFirst("img")
-                val thumbnail = img?.absUrl("data-src")?.ifEmpty { img.absUrl("src") } ?: ""
+                val thumbnail = img?.attr("src") ?: img?.attr("data-src")
 
-                if (title.isNotBlank() && absUrl.isNotBlank()) {
+                if (title.isNotBlank() && href.startsWith("/gif/")) {
                     animes.add(
                         SAnime.create().apply {
                             this.title = title
-                            this.setUrlWithoutDomain(absUrl)
-                            this.thumbnail_url = thumbnail
+                            this.setUrlWithoutDomain(href)
+                            this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
                         },
                     )
                 }
@@ -285,5 +208,66 @@ class HardGif : AnimeHttpSource() {
             }
         }
         return ""
+    }
+
+    private fun extractVideosFromDocument(document: Document, pageUrl: String): List<Video> {
+        val videos = mutableListOf<Video>()
+
+        val videoContainer = document.selectFirst("[data-videos]")
+        if (videoContainer != null) {
+            val dataVideos = videoContainer.attr("data-videos")
+            if (dataVideos.isNotBlank()) {
+                try {
+                    val jsonArray = JSONArray(dataVideos)
+                    for (i in 0 until jsonArray.length()) {
+                        val obj = jsonArray.getJSONObject(i)
+                        val url = obj.optString("url").replace("\\/", "/")
+                        val format = obj.optString("format", "hls_url")
+                        if (url.isNotBlank() && url.startsWith("http")) {
+                            val videoHeaders = headers.newBuilder()
+                                .set("Referer", pageUrl)
+                                .set("Accept", "*/*")
+                                .build()
+                            val quality = if (format.contains("hls")) "HLS" else "Video"
+                            videos.add(Video(url, quality, url, videoHeaders))
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        if (videos.isEmpty()) {
+            val hlsRegex = Regex("""https?://[^\s"'<>]+?\.m3u8[^\s"'<>]*""")
+            hlsRegex.findAll(document.html()).forEach { match ->
+                val url = match.value.replace("&amp;", "&")
+                val videoHeaders = headers.newBuilder()
+                    .set("Referer", pageUrl)
+                    .set("Accept", "*/*")
+                    .build()
+                videos.add(Video(url, "HLS", url, videoHeaders))
+            }
+        }
+
+        if (videos.isEmpty()) {
+            document.select("video source[src], video[src]").forEach { element ->
+                var src = element.attr("src").trim()
+                if (src.startsWith("//")) {
+                    src = "https:$src"
+                } else if (src.startsWith("/")) {
+                    src = "$baseUrl$src"
+                }
+                if (src.isNotBlank() && !src.startsWith("blob:")) {
+                    val videoHeaders = headers.newBuilder()
+                        .set("Referer", pageUrl)
+                        .set("Accept", "*/*")
+                        .build()
+                    val quality = if (src.contains(".mp4")) "MP4" else "Video"
+                    videos.add(Video(src, quality, src, videoHeaders))
+                }
+            }
+        }
+
+        return videos.distinctBy { it.url }
     }
 }
