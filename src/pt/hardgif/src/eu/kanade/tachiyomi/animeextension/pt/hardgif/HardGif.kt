@@ -36,7 +36,8 @@ class HardGif : AnimeHttpSource() {
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animes = parseCards(document)
-        return AnimesPage(animes, animes.isNotEmpty())
+        val hasNextPage = document.select("a.next, .pagination .next, a[href*='/page/']").isNotEmpty() || animes.size >= 10
+        return AnimesPage(animes, hasNextPage)
     }
 
     // =============================== Latest ===============================
@@ -88,6 +89,7 @@ class HardGif : AnimeHttpSource() {
         if (thumbnail.isBlank()) {
             val style = document.selectFirst("div.vjs-poster")?.attr("style") ?: ""
             thumbnail = style.substringAfter("url(\"").substringBefore("\")")
+                .substringAfter("url('").substringBefore("')")
                 .ifEmpty { document.selectFirst("meta[property='og:image']")?.attr("content") ?: "" }
         }
 
@@ -126,8 +128,10 @@ class HardGif : AnimeHttpSource() {
                         val format = obj.optString("format", "hls_url")
                         if (url.isNotBlank() && url.startsWith("http")) {
                             val videoHeaders = headers.newBuilder()
-                                .set("Referer", pageUrl)
-                                .set("Accept", "*/*")
+                                .removeAll("Referer")
+                                .add("Referer", pageUrl)
+                                .removeAll("Accept")
+                                .add("Accept", "*/*")
                                 .build()
                             val label = if (jsonArray.length() > 1) {
                                 "Opção ${i + 1} (${if (format.contains("hls")) "HLS" else "MP4"})"
@@ -147,8 +151,10 @@ class HardGif : AnimeHttpSource() {
             hlsRegex.findAll(document.html()).forEachIndexed { index, match ->
                 val url = match.value.replace("&amp;", "&")
                 val videoHeaders = headers.newBuilder()
-                    .set("Referer", pageUrl)
-                    .set("Accept", "*/*")
+                    .removeAll("Referer")
+                    .add("Referer", pageUrl)
+                    .removeAll("Accept")
+                    .add("Accept", "*/*")
                     .build()
                 videos.add(Video(url, "HLS Opção ${index + 1}", url, videoHeaders))
             }
@@ -164,8 +170,10 @@ class HardGif : AnimeHttpSource() {
                 }
                 if (src.isNotBlank() && !src.startsWith("blob:")) {
                     val videoHeaders = headers.newBuilder()
-                        .set("Referer", pageUrl)
-                        .set("Accept", "*/*")
+                        .removeAll("Referer")
+                        .add("Referer", pageUrl)
+                        .removeAll("Accept")
+                        .add("Accept", "*/*")
                         .build()
                     val quality = if (src.contains(".mp4")) "MP4" else "Video"
                     videos.add(Video(src, quality, src, videoHeaders))
@@ -264,4 +272,18 @@ class HardGif : AnimeHttpSource() {
             "meta[name='description']",
             "meta[property='og:description']",
         )
-        for (selector
+        for (selector in selectors) {
+            val element = document.selectFirst(selector)
+            if (element != null) {
+                if (element.tagName() == "meta") {
+                    val content = element.attr("content").trim()
+                    if (content.isNotBlank()) return content
+                } else {
+                    val text = element.text().trim()
+                    if (text.isNotBlank()) return text
+                }
+            }
+        }
+        return ""
+    }
+}
