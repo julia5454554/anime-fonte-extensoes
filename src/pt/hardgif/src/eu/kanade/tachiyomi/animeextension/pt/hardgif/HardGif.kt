@@ -29,7 +29,7 @@ class HardGif : AnimeHttpSource() {
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
-        val url = if (page > 1) "$baseUrl/popular/page/$page/" else "$baseUrl/popular/"
+        val url = if (page > 1) "$baseUrl/page/$page/" else "$baseUrl/"
         return GET(url, headers)
     }
 
@@ -40,10 +40,7 @@ class HardGif : AnimeHttpSource() {
     }
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int): Request {
-        val url = if (page > 1) "$baseUrl/page/$page/" else "$baseUrl/"
-        return GET(url, headers)
-    }
+    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
 
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
@@ -103,29 +100,43 @@ class HardGif : AnimeHttpSource() {
     // ============================= Utilities ==============================
     private fun parseCards(document: Document): List<SAnime> {
         val animes = mutableListOf<SAnime>()
-        val containerSelectors = listOf(
-            "div.video-card",
-            "div.card",
-            "div.thumb",
-            "div.item",
-            "article",
-            "div.post",
-        )
+        val elements = document.select("a:has(img), div.video-card a, div.card a, article a, div.item a")
 
-        for (selector in containerSelectors) {
-            val elements = document.select(selector)
-            if (elements.isNotEmpty()) {
-                for (element in elements) {
-                    val link = element.selectFirst("a[href]") ?: continue
-                    val absUrl = link.absUrl("href")
+        for (link in elements) {
+            val absUrl = link.absUrl("href")
+            if (absUrl.isBlank() || absUrl == baseUrl || absUrl == "$baseUrl/" || absUrl.contains("/page/")) continue
 
-                    if (absUrl.isBlank() || absUrl == baseUrl || absUrl == "$baseUrl/") continue
+            val img = link.selectFirst("img") ?: link.parent()?.selectFirst("img")
+            val thumbnail = img?.absUrl("data-src")
+                ?.ifEmpty { img.absUrl("src") }
+                ?.ifEmpty { img.absUrl("data-lazy-src") }
+                ?: ""
 
-                    val title = link.attr("title").ifBlank { link.text() }.trim()
-                    val img = element.selectFirst("img")
+            val title = link.attr("title")
+                .ifBlank { img?.attr("alt") }
+                .ifBlank { link.text() }
+                .trim()
+
+            if (title.isNotBlank()) {
+                animes.add(
+                    SAnime.create().apply {
+                        this.title = title
+                        this.setUrlWithoutDomain(absUrl)
+                        this.thumbnail_url = thumbnail
+                    },
+                )
+            }
+        }
+
+        if (animes.isEmpty()) {
+            document.select("a[href]").forEach { link ->
+                val absUrl = link.absUrl("href")
+                if (absUrl.isNotBlank() && absUrl != baseUrl && absUrl != "$baseUrl/" && !absUrl.contains("/page/")) {
+                    val img = link.selectFirst("img")
                     val thumbnail = img?.absUrl("data-src")?.ifEmpty { img.absUrl("src") } ?: ""
+                    val title = link.attr("title").ifBlank { img?.attr("alt") }.ifBlank { link.text() }.trim()
 
-                    if (title.isNotBlank()) {
+                    if (title.isNotBlank() && title.length > 2) {
                         animes.add(
                             SAnime.create().apply {
                                 this.title = title
@@ -134,26 +145,6 @@ class HardGif : AnimeHttpSource() {
                             },
                         )
                     }
-                }
-                if (animes.isNotEmpty()) break
-            }
-        }
-
-        if (animes.isEmpty()) {
-            document.select("a[href*='/gif/'], a[href*='/video/'], a[href*='/g/']").forEach { link ->
-                val absUrl = link.absUrl("href")
-                val title = link.attr("title").ifBlank { link.text() }.trim()
-                val img = link.selectFirst("img")
-                val thumbnail = img?.absUrl("data-src")?.ifEmpty { img.absUrl("src") } ?: ""
-
-                if (title.isNotBlank() && absUrl.isNotBlank()) {
-                    animes.add(
-                        SAnime.create().apply {
-                            this.title = title
-                            this.setUrlWithoutDomain(absUrl)
-                            this.thumbnail_url = thumbnail
-                        },
-                    )
                 }
             }
         }
