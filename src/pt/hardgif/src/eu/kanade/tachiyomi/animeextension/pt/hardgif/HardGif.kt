@@ -11,9 +11,8 @@ import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
-import org.jsoup.nodes.Document
 import org.json.JSONArray
-import org.json.JSONObject
+import org.jsoup.nodes.Document
 
 class HardGif : AnimeHttpSource() {
 
@@ -27,11 +26,10 @@ class HardGif : AnimeHttpSource() {
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
-        .add("Cookie", "age_ok=1")  // cookie para pular verificação de idade
+        .add("Cookie", "age_ok=1") // cookie para pular verificação de idade
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
-        // A paginação não foi confirmada; tentando um padrão comum
         val url = if (page == 1) baseUrl else "$baseUrl?page=$page"
         return GET(url, headers)
     }
@@ -127,7 +125,7 @@ class HardGif : AnimeHttpSource() {
             "div.entry-content",
             "div.card-body p",
             "meta[name='description']",
-            "meta[property='og:description']"
+            "meta[property='og:description']",
         )
         for (selector in selectors) {
             val element = document.selectFirst(selector)
@@ -147,7 +145,6 @@ class HardGif : AnimeHttpSource() {
     private fun extractVideosFromDocument(document: Document, pageUrl: String): List<Video> {
         val videos = mutableListOf<Video>()
 
-        // 1) Tentar extrair do atributo data-videos (JSON)
         val videoContainer = document.selectFirst("[data-videos]")
         if (videoContainer != null) {
             val dataVideos = videoContainer.attr("data-videos")
@@ -172,7 +169,6 @@ class HardGif : AnimeHttpSource() {
             }
         }
 
-        // 2) Fallback: procurar por URLs .m3u8 no HTML (se não encontrou acima)
         if (videos.isEmpty()) {
             val hlsRegex = Regex("""https?://[^\s"'<>]+?\.m3u8[^\s"'<>]*""")
             hlsRegex.findAll(document.html()).forEach { match ->
@@ -185,12 +181,14 @@ class HardGif : AnimeHttpSource() {
             }
         }
 
-        // 3) Fallback: tags <video> ou <source>
         if (videos.isEmpty()) {
             document.select("video source[src], video[src]").forEach { element ->
                 var src = element.attr("src").trim()
-                if (src.startsWith("//")) src = "https:$src"
-                else if (src.startsWith("/")) src = "$baseUrl$src"
+                if (src.startsWith("//")) {
+                    src = "https:$src"
+                } else if (src.startsWith("/")) {
+                    src = "$baseUrl$src"
+                }
                 if (src.isNotBlank() && !src.startsWith("blob:")) {
                     val videoHeaders = headers.newBuilder()
                         .set("Referer", pageUrl)
