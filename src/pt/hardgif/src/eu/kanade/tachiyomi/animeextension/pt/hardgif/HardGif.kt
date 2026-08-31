@@ -39,7 +39,6 @@ class HardGif : AnimeHttpSource() {
         val animes = parseCards(document)
 
         if (animes.isEmpty()) {
-            // Tenta uma segunda requisição com cookie manual se a primeira falhou
             val retryDoc = fetchWithAgeCookie(response.request.url.toString())
             if (retryDoc != null) {
                 return AnimesPage(parseCards(retryDoc), parseCards(retryDoc).isNotEmpty())
@@ -118,19 +117,18 @@ class HardGif : AnimeHttpSource() {
     }
 
     // ============================= Utilities ==============================
-    private fun fetchWithAgeCookie(url: String): Document? {
-        return try {
-            val request = GET(url, headers.newBuilder().set("Cookie", "age_ok=1; age_verified=1").build())
-            client.newCall(request).execute().use { resp ->
-                if (resp.isSuccessful) resp.asJsoup() else null
-            }
-        } catch (_: Exception) { null }
+    private fun fetchWithAgeCookie(url: String): Document? = try {
+        val request = GET(url, headers.newBuilder().set("Cookie", "age_ok=1; age_verified=1").build())
+        client.newCall(request).execute().use { resp ->
+            if (resp.isSuccessful) resp.asJsoup() else null
+        }
+    } catch (_: Exception) {
+        null
     }
 
     private fun parseCards(document: Document): List<SAnime> {
         val animes = mutableListOf<SAnime>()
 
-        // Tenta vários seletores de contêineres de card
         val containerSelectors = listOf(
             "div.video-card",
             "div.card.video-card",
@@ -158,7 +156,7 @@ class HardGif : AnimeHttpSource() {
                                 this.title = title
                                 this.setUrlWithoutDomain(href)
                                 this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
-                            }
+                            },
                         )
                     }
                 }
@@ -166,7 +164,6 @@ class HardGif : AnimeHttpSource() {
             }
         }
 
-        // Fallback: procura qualquer link /gif/ na página
         if (animes.isEmpty()) {
             document.select("a[href*='/gif/']").forEach { link ->
                 val title = link.attr("title").ifBlank { link.text().trim() }
@@ -180,7 +177,7 @@ class HardGif : AnimeHttpSource() {
                             this.title = title
                             this.setUrlWithoutDomain(href)
                             this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
-                        }
+                        },
                     )
                 }
             }
