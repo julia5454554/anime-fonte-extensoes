@@ -1,0 +1,37 @@
+name: Build Hentai3D Extension
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'src/pt/hentai3d/**'
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'src/pt/hentai3d/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build extension APK
+        run: ./gradlew :src:pt:hentai3d:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hentai3d-extension
+          path: src/pt/hentai3d/build/outputs/apk/debug/*.apk
