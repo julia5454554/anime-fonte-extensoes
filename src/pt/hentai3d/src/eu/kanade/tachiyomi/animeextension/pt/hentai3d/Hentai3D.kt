@@ -7,10 +7,10 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.asJsoup
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 
 class Hentai3D : AnimeHttpSource() {
 
@@ -29,7 +29,7 @@ class Hentai3D : AnimeHttpSource() {
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
+        val document = Jsoup.parse(response.body!!.string())
         val elements = document.select("div.item.min-w-0")
         val animeList = elements.mapNotNull { element ->
             val linkElement = element.selectFirst("a.image") ?: return@mapNotNull null
@@ -64,7 +64,7 @@ class Hentai3D : AnimeHttpSource() {
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val document = response.asJsoup()
+        val document = Jsoup.parse(response.body!!.string())
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(response.request.url.toString())
         anime.title = document.selectFirst("h1, h2.title, .entry-title")?.text()?.trim()
@@ -93,7 +93,7 @@ class Hentai3D : AnimeHttpSource() {
     }
 
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = Jsoup.parse(response.body!!.string())
         val pageUrl = response.request.url.toString()
         val videos = mutableListOf<Video>()
 
