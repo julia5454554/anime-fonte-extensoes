@@ -19,12 +19,10 @@ class Hentai3D : AnimeHttpSource() {
     override val lang = "pt"
     override val supportsLatest = true
 
-    // ===================== Headers =====================
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", baseUrl)
 
-    // ===================== Listagem =====================
     override fun popularAnimeRequest(page: Int): Request {
         val url = if (page == 1) baseUrl else "$baseUrl/?page=$page"
         return GET(url, headersBuilder().build())
@@ -53,7 +51,6 @@ class Hentai3D : AnimeHttpSource() {
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    // ===================== Busca =====================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val encodedQuery = query.replace(" ", "%20")
         val url = if (page == 1) {
@@ -66,34 +63,27 @@ class Hentai3D : AnimeHttpSource() {
 
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    // ===================== Detalhes =====================
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(response.request.url.toString())
-
         anime.title = document.selectFirst("h1, h2.title, .entry-title")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")
             ?: "Sem título"
-
         anime.thumbnail_url = document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: document.selectFirst("video[poster]")?.attr("poster")
             ?: document.selectFirst("img.thumb")?.attr("src")
             ?: document.selectFirst("img")?.attr("src")
-
         anime.description = document.selectFirst("meta[name='description']")?.attr("content")
             ?: document.selectFirst("div.description, div.entry-content, div.video-description, p")?.text()
-
         val genres = mutableListOf<String>()
         document.select("a[href*='/category/']").forEach { genres.add(it.text().trim()) }
         document.select("a.taxonomy-tag, a[href*='/tags/']").forEach { genres.add(it.text().trim()) }
         document.select("a[rel='tag']").forEach { genres.add(it.text().trim()) }
         anime.genre = genres.distinct().joinToString(", ")
-
         return anime
     }
 
-    // ===================== Episódios =====================
     override fun episodeListParse(response: Response): List<SEpisode> {
         val episode = SEpisode.create()
         episode.setUrlWithoutDomain(response.request.url.toString())
@@ -102,13 +92,11 @@ class Hentai3D : AnimeHttpSource() {
         return listOf(episode)
     }
 
-    // ===================== Extração de vídeo =====================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val pageUrl = response.request.url.toString()
         val videos = mutableListOf<Video>()
 
-        // 1) Tag <video class="art-video"> (player principal)
         document.select("video.art-video").forEach { element ->
             val src = element.attr("src")
             if (src.isNotBlank() && (src.contains(".mp4") || src.contains(".m3u8"))) {
@@ -116,7 +104,6 @@ class Hentai3D : AnimeHttpSource() {
             }
         }
 
-        // 2) Tags <video> genéricas (excluindo preview)
         document.select("video").forEach { element ->
             val src = element.attr("src")
             if (src.isNotBlank() && !src.contains("preview.mp4") && (src.contains(".mp4") || src.contains(".m3u8"))) {
@@ -127,7 +114,6 @@ class Hentai3D : AnimeHttpSource() {
             }
         }
 
-        // 3) Tags <source>
         document.select("video source").forEach { element ->
             val src = element.attr("src")
             if (src.isNotBlank() && !src.contains("preview.mp4") && (src.contains(".mp4") || src.contains(".m3u8"))) {
@@ -138,7 +124,6 @@ class Hentai3D : AnimeHttpSource() {
             }
         }
 
-        // 4) Regex genérica para .mp4/.m3u8 (fallback)
         val html = document.html()
         val genericRegex = Regex("""(https?://[^"'\s]+\.(?:mp4|m3u8)[^"'\s]*)""")
         genericRegex.findAll(html).forEach { match ->
@@ -148,7 +133,6 @@ class Hentai3D : AnimeHttpSource() {
             }
         }
 
-        // 5) Flashvars (caso o site mude)
         val flashVarsRegex = Regex("""(?:video_url|video_alt_url\d*)\s*:\s*["']([^"']+)["']""")
         val qualityRegex = Regex("""(?:video_quality|quality)\s*:\s*["']([^"']+)["']""")
         val matches = flashVarsRegex.findAll(html).toList()
