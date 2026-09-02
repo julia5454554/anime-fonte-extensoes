@@ -11,7 +11,6 @@ import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
-import org.jsoup.nodes.Document
 
 class Hentai3D : AnimeHttpSource() {
 
@@ -81,13 +80,13 @@ class Hentai3D : AnimeHttpSource() {
             ?: document.selectFirst("img")?.attr("src")
         anime.description = document.selectFirst("meta[name='description']")?.attr("content")
             ?: document.selectFirst("div.description, div.entry-content, div.video-description, p")?.text()
-        
+
         val genres = mutableListOf<String>()
         document.select("a[href*='/category/']").forEach { genres.add(it.text().trim()) }
         document.select("a.taxonomy-tag, a[href*='/tags/']").forEach { genres.add(it.text().trim()) }
         document.select("a[rel='tag']").forEach { genres.add(it.text().trim()) }
         anime.genre = genres.distinct().joinToString(", ")
-        
+
         return anime
     }
 
@@ -186,12 +185,10 @@ class Hentai3D : AnimeHttpSource() {
         return videos
     }
 
-    private fun fixUrl(url: String): String {
-        return when {
-            url.startsWith("//") -> "https:$url"
-            url.startsWith("/") -> "$baseUrl$url"
-            else -> url
-        }
+    private fun fixUrl(url: String): String = when {
+        url.startsWith("//") -> "https:$url"
+        url.startsWith("/") -> "$baseUrl$url"
+        else -> url
     }
 
     private fun videoHeaders(pageUrl: String): Headers = Headers.Builder()
