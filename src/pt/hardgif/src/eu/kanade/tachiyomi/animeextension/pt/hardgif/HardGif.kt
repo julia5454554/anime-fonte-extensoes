@@ -35,11 +35,22 @@ class HardGif : AnimeHttpSource() {
         val document = response.asJsoup()
         checkCloudflare(response, document.html())
 
-        val animeList = document.select("a[href]").mapNotNull { link ->
+        // Seleciona cards ou links específicos de posts
+        val elements = document.select(".card, article, .post, .mobVideoContainer, div[class*='col-']")
+            .ifEmpty { document.select("a[href*='/gif/'], a[href*='/video/']") }
+
+        val animeList = elements.mapNotNull { element ->
+            val link = if (element.tagName() == "a") {
+                element
+            } else {
+                element.selectFirst("a[href*='/gif/'], a[href*='/video/'], h1 a, h2 a, h3 a, .card-title a, a[href]")
+                    ?: return@mapNotNull null
+            }
+
             val rawUrl = link.attr("href").trim()
             val absoluteUrl = fixUrl(rawUrl)
 
-            // Ignora a Home, links de navegação, imagens diretas, avatares e estáticos
+            // Aceita apenas links diretos de posts/gifs e ignora sistema/autor/categorias
             val isInvalidLink = rawUrl.isBlank() ||
                 rawUrl == "#" ||
                 absoluteUrl == baseUrl ||
@@ -53,25 +64,29 @@ class HardGif : AnimeHttpSource() {
 
             if (isInvalidLink) return@mapNotNull null
 
-            val parent = link.parents().firstOrNull {
-                it.hasClass("card") || it.hasClass("post") || it.hasClass("mobVideoContainer") || it.tagName() == "article"
-            } ?: link.parent()
-
             val title = link.text().trim().ifBlank {
-                parent?.selectFirst("h1, h2, h3, h4, h5, h6, .card-title, .title")?.text()?.trim() ?: ""
+                element.selectFirst("h1, h2, h3, h4, h5, h6, .card-title, .title")?.text()?.trim() ?: ""
             }
 
-            if (title.isBlank() || title.length < 3 || title.equals("Sem título", ignoreCase = true)) {
+            // Descarta títulos inválidos ou genéricos
+            if (title.isBlank() || title.length < 3 || title.equals("Sem título", ignoreCase = true) || title.equals("Vídeo", ignoreCase = true)) {
                 return@mapNotNull null
             }
 
-            // Captura a capa do post e descarta imagens do tipo avatar/logo
-            val container = parent?.selectFirst(".mobVideoContainer")
+            // Captura a capa ignorando avatares e logos
+            val container = if (element.hasClass("mobVideoContainer")) element else element.selectFirst(".mobVideoContainer")
             val screenshotsAttr = container?.attr("data-screenshots") ?: ""
+
             val thumbnail = Regex("""https?://[^"'\s\\]+""").find(screenshotsAttr)?.value
-                ?: parent?.selectFirst("video")?.attr("poster")
-                ?: parent?.selectFirst("img:not([src*='logo']):not([src*='avatar'])")?.attr("src")
-                ?: parent?.selectFirst("img:not([src*='logo']):not([src*='avatar'])")?.attr("data-src")
+                ?: element.selectFirst("video")?.attr("poster")
+                ?: element.select("img").mapNotNull { img ->
+                    val src = img.attr("src").ifBlank { img.attr("data-src") }
+                    if (src.contains("external-preview") || src.contains("avatar") || src.contains("logo") || src.contains("icon")) {
+                        null
+                    } else {
+                        src
+                    }
+                }.firstOrNull()
 
             SAnime.create().apply {
                 setUrlWithoutDomain(rawUrl)
@@ -111,7 +126,10 @@ class HardGif : AnimeHttpSource() {
             ?: "Vídeo"
         anime.thumbnail_url = document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: document.selectFirst("video[poster]")?.attr("poster")
-            ?: document.selectFirst("img:not([src*='logo']):not([src*='avatar'])")?.attr("src")
+            ?: document.select("img").mapNotNull { img ->
+                val src = img.attr("src")
+                if (src.contains("external-preview") || src.contains("avatar") || src.contains("logo")) null else src
+            }.firstOrNull()
         anime.description = document.selectFirst("meta[name='description']")?.attr("content")
             ?: document.selectFirst(".entry-content, .post-content, p")?.text()
 
