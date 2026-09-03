@@ -20,13 +20,11 @@ class HardGif : AnimeHttpSource() {
     override val lang = "pt"
     override val supportsLatest = true
 
-    override val client: OkHttpClient = network.cloudflareClient
+    // Cliente OkHttp padrão (sem tratamento automatizado de Cloudflare)
+    override val client: OkHttpClient = network.client
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36")
-        .add("sec-ch-ua", "\"Chromium\";v=\"139\", \"Not;A=Brand\";v=\"99\"")
-        .add("sec-ch-ua-mobile", "?1")
-        .add("sec-ch-ua-platform", "\"Android\"")
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
         .add("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
         .add("Referer", "$baseUrl/")
@@ -37,7 +35,6 @@ class HardGif : AnimeHttpSource() {
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        checkCloudflareAndAgeGate(response, document.html())
 
         val elements = document.select(".card, article, .post, .mobVideoContainer, div[class*='col-']")
             .ifEmpty { document.select("a[href*='/gif/'], a[href*='/video/']") }
@@ -77,7 +74,6 @@ class HardGif : AnimeHttpSource() {
             val container = if (element.hasClass("mobVideoContainer")) element else element.selectFirst(".mobVideoContainer")
             val screenshotsAttr = container?.attr("data-screenshots") ?: ""
 
-            // Extração de capas tratando URLs escapadas (\/) e atributos ocultos
             val rawThumbnail = Regex("""https?://[^"'\s\\]+\.(?:jpg|jpeg|png|webp)""", RegexOption.IGNORE_CASE)
                 .find(screenshotsAttr)?.value
                 ?: element.selectFirst("video")?.attr("poster")?.ifBlank { null }
@@ -103,10 +99,6 @@ class HardGif : AnimeHttpSource() {
             }
         }.distinctBy { it.url }
 
-        if (animeList.isEmpty()) {
-            throw Exception("Nenhum item encontrado. Abra na WebView para aceitar a verificação de idade e passar o Cloudflare.")
-        }
-
         return AnimesPage(animeList, false)
     }
 
@@ -125,7 +117,6 @@ class HardGif : AnimeHttpSource() {
     // =========================== Anime Details ============================
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
-        checkCloudflareAndAgeGate(response, document.html())
 
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(response.request.url.toString())
@@ -169,8 +160,6 @@ class HardGif : AnimeHttpSource() {
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        checkCloudflareAndAgeGate(response, document.html())
-
         val pageUrl = response.request.url.toString()
         val videos = mutableListOf<Video>()
 
@@ -209,15 +198,6 @@ class HardGif : AnimeHttpSource() {
     }
 
     // ============================= Utilities ==============================
-    private fun checkCloudflareAndAgeGate(response: Response, html: String) {
-        if (response.code in listOf(403, 503) || html.contains("cf-challenge") || html.contains("Just a moment")) {
-            throw Exception("Proteção Cloudflare ativada. Toque em 'Abrir na WebView'.")
-        }
-        if (html.contains("VERIFICATION REQUIRED") || html.contains("I AM 18+")) {
-            throw Exception("Verificação de idade necessária. Toque em 'Abrir na WebView' e clique em 'I AM 18+' para salvar o acesso.")
-        }
-    }
-
     private fun fixUrl(url: String): String = when {
         url.startsWith("//") -> "https:$url"
         url.startsWith("/") -> "$baseUrl$url"
@@ -226,9 +206,6 @@ class HardGif : AnimeHttpSource() {
 
     private fun videoHeaders(pageUrl: String): Headers = Headers.Builder()
         .set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36")
-        .set("sec-ch-ua", "\"Chromium\";v=\"139\", \"Not;A=Brand\";v=\"99\"")
-        .set("sec-ch-ua-mobile", "?1")
-        .set("sec-ch-ua-platform", "\"Android\"")
         .set("Referer", pageUrl)
         .set("Origin", baseUrl)
         .set("Accept", "*/*")
