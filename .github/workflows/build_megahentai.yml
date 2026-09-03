@@ -1,0 +1,40 @@
+name: Build Mega Hentai Extension
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/pt/megahentai/**'
+      - '.github/workflows/build_megahentai.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/pt/megahentai/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Mega Hentai extension APK
+        run: ./gradlew :src:pt:megahentai:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MegaHentai-APK
+          path: src/pt/megahentai/build/outputs/apk/debug/*.apk
