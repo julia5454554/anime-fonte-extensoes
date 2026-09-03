@@ -38,21 +38,29 @@ class HardGif : AnimeHttpSource() {
         val document = response.asJsoup()
         checkCloudflare(response, document.html())
 
-        // Captura todos os links de posts (/gif/...)
-        val animeList = document.select("a[href*=/gif/]").mapNotNull { link ->
+        // Estratégia 1: Selecionar por estrutura de cards ou elementos de post
+        var animeList = document.select("article, .card, .video-card, .post, div[class*='col-'], .item").mapNotNull { card ->
+            val link = card.selectFirst("h1 a, h2 a, h3 a, h4 a, h5 a, h6 a, .title a, a[href*='/gif/'], a[href*='/video/'], a.card-link")
+                ?: card.selectFirst("a[href]") ?: return@mapNotNull null
+
             val rawUrl = link.attr("href").trim()
-            val title = link.text().trim()
+            if (rawUrl.isBlank() || rawUrl == "#" || rawUrl.contains("/category/") || rawUrl.contains("/tag/")) {
+                return@mapNotNull null
+            }
 
-            if (rawUrl.isBlank() || title.isBlank()) return@mapNotNull null
+            val title = link.text().trim().ifBlank {
+                card.selectFirst("h1, h2, h3, h4, h5, h6, .title, .card-title")?.text()?.trim() ?: ""
+            }
+            if (title.isBlank()) return@mapNotNull null
 
-            val parentCard = link.parents().firstOrNull { it.hasClass("card") || it.hasClass("col-12") }
-            val container = parentCard?.selectFirst(".mobVideoContainer")
+            val container = card.selectFirst(".mobVideoContainer")
             val screenshotsAttr = container?.attr("data-screenshots") ?: ""
             val thumbnail = Regex("""https?://[^"'\s\\]+""").find(screenshotsAttr)?.value
-                ?: parentCard?.selectFirst(".vjs-poster")?.attr("style")?.let { style ->
+                ?: card.selectFirst(".vjs-poster")?.attr("style")?.let { style ->
                     Regex("""url\((?:['"]?)(.*?)(?:['"]?)\)""").find(style)?.groupValues?.get(1)
                 }
-                ?: parentCard?.selectFirst("img")?.attr("src")
+                ?: card.selectFirst("img")?.attr("src")
+                ?: card.selectFirst("img")?.attr("data-src")
 
             SAnime.create().apply {
                 setUrlWithoutDomain(rawUrl)
@@ -61,13 +69,32 @@ class HardGif : AnimeHttpSource() {
             }
         }.distinctBy { it.url }
 
+        // Estratégia 2: Fallback genérico para links de posts diretamente na página
         if (animeList.isEmpty()) {
-            throw Exception("Nenhum item encontrado. Verifique a conexão ou abra na WebView para o Cloudflare.")
+            animeList = document.select("a[href]").mapNotNull { link ->
+                val rawUrl = link.attr("href").trim()
+                val title = link.text().trim()
+
+                val isInvalid = rawUrl.isBlank() || title.length < 3 ||
+                    rawUrl == baseUrl || rawUrl == "$baseUrl/" ||
+                    rawUrl.contains("/category/") || rawUrl.contains("/tag/") ||
+                    rawUrl.contains("/page/") || rawUrl.startsWith("#") ||
+                    rawUrl.startsWith("javascript:")
+
+                if (isInvalid) return@mapNotNull null
+
+                SAnime.create().apply {
+                    setUrlWithoutDomain(rawUrl)
+                    this.title = title
+                }
+            }.distinctBy { it.url }
         }
 
-        // Para scroll infinito: enquanto a página retornar itens, consideramos que existe próxima página
-        val hasNextPage = animeList.isNotEmpty()
-        return AnimesPage(animeList, hasNextPage)
+        if (animeList.isEmpty()) {
+            throw Exception("Nenhum item encontrado. Abra na WebView para concluir o desafio do Cloudflare.")
+        }
+
+        return AnimesPage(animeList, animeList.isNotEmpty())
     }
 
     // =============================== Latest ===============================
