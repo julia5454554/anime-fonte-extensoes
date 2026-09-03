@@ -20,7 +20,9 @@ class HardGif : AnimeHttpSource() {
     override val supportsLatest = true
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+        .add("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
         .add("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
@@ -31,26 +33,45 @@ class HardGif : AnimeHttpSource() {
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val elements = document.select("article, div.card, div.post, div.video-card, div.item, .grid-item, div.entry")
 
-        val animeList = elements.mapNotNull { element ->
-            val linkElement = element.selectFirst("a[href]") ?: return@mapNotNull null
-            val rawUrl = linkElement.attr("href")
+        // Seleciona diretamente os links que contêm imagem ou vídeo
+        var links = document.select("a[href]:has(img), a[href]:has(video)")
+        if (links.isEmpty()) {
+            links = document.select("article a[href], div.card a[href], div.post a[href], div.item a[href]")
+        }
 
-            if (rawUrl.isBlank() || rawUrl == baseUrl || rawUrl == "$baseUrl/" ||
-                rawUrl.contains("/category/") || rawUrl.contains("/tag/") || rawUrl.contains("/page/")
+        val animeList = links.mapNotNull { linkElement ->
+            val rawUrl = linkElement.attr("href").trim()
+
+            // Filtra links institucionais e de navegação
+            if (rawUrl.isBlank() ||
+                rawUrl == baseUrl ||
+                rawUrl == "$baseUrl/" ||
+                rawUrl.startsWith("#") ||
+                rawUrl.contains("/category/") ||
+                rawUrl.contains("/tag/") ||
+                rawUrl.contains("/page/") ||
+                rawUrl.contains("/dmca") ||
+                rawUrl.contains("/privacy") ||
+                rawUrl.contains("/terms") ||
+                rawUrl.contains("/contact") ||
+                rawUrl.contains("/search")
             ) {
                 return@mapNotNull null
             }
 
-            val title = element.selectFirst("h1, h2, h3, h4, h5, h6, .card-title, .title, .entry-title")?.text()?.trim()
-                ?: linkElement.attr("title").ifBlank { linkElement.text() }.trim()
+            val imgElement = linkElement.selectFirst("img, video")
+                ?: linkElement.parent()?.selectFirst("img, video")
 
-            if (title.isBlank()) return@mapNotNull null
+            val title = linkElement.attr("title").ifBlank {
+                imgElement?.attr("alt") ?: linkElement.text()
+            }.trim()
 
-            val imgElement = element.selectFirst("img, video")
+            if (title.isBlank() || title.equals("Home", ignoreCase = true)) return@mapNotNull null
+
             val thumbnail = imgElement?.attr("data-src")
                 ?: imgElement?.attr("data-lazy-src")
+                ?: imgElement?.attr("data-original")
                 ?: imgElement?.attr("src")
                 ?: imgElement?.attr("poster")
 
@@ -61,7 +82,7 @@ class HardGif : AnimeHttpSource() {
             }
         }.distinctBy { it.url }
 
-        val hasNextPage = document.selectFirst("a.next, a.nextpostslink, .pagination a.next, a:contains(Next), a:contains(Próxima), .nav-previous a") != null
+        val hasNextPage = document.selectFirst("a.next, a.nextpostslink, .pagination a.next, a:contains(Next), a:contains(Próxima), a[rel='next']") != null
         return AnimesPage(animeList, hasNextPage)
     }
 
@@ -174,7 +195,7 @@ class HardGif : AnimeHttpSource() {
     }
 
     private fun videoHeaders(pageUrl: String): Headers = Headers.Builder()
-        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         .set("Referer", pageUrl)
         .set("Origin", baseUrl)
         .set("Accept", "*/*")
