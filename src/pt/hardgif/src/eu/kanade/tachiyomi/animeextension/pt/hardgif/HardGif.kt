@@ -77,21 +77,29 @@ class HardGif : AnimeHttpSource() {
             val container = if (element.hasClass("mobVideoContainer")) element else element.selectFirst(".mobVideoContainer")
             val screenshotsAttr = container?.attr("data-screenshots") ?: ""
 
-            val thumbnail = Regex("""https?://[^"'\s\\]+""").find(screenshotsAttr)?.value
-                ?: element.selectFirst("video")?.attr("poster")
+            // Extração de capas filtrando atributos ocultos, posters de vídeo e lazy loading
+            val thumbnail = Regex("""https?://[^"'\s\\]+\.(?:jpg|jpeg|png|webp)""", RegexOption.IGNORE_CASE)
+                .find(screenshotsAttr)?.value
+                ?: element.selectFirst("video")?.attr("poster")?.ifBlank { null }
                 ?: element.select("img").mapNotNull { img ->
-                    val src = img.attr("src").ifBlank { img.attr("data-src") }
-                    if (src.contains("external-preview") || src.contains("avatar") || src.contains("logo") || src.contains("icon")) {
+                    val src = img.attr("data-src")
+                        .ifBlank { img.attr("data-lazy-src") }
+                        .ifBlank { img.attr("data-original") }
+                        .ifBlank { img.attr("src") }
+
+                    if (src.isBlank() || src.contains("avatar") || src.contains("logo") || src.contains("external-preview") || src.contains("icon")) {
                         null
                     } else {
                         src
                     }
                 }.firstOrNull()
+                ?: Regex("""https?://[^"'\s\\]+\.(?:jpg|jpeg|png|webp)""", RegexOption.IGNORE_CASE)
+                    .find(element.html())?.value
 
             SAnime.create().apply {
                 setUrlWithoutDomain(rawUrl)
                 this.title = title
-                thumbnail_url = thumbnail?.let { fixUrl(it.replace("\\/", "/")) }
+                thumbnail_url = thumbnail?.replace("\\/", "/")?.let { fixUrl(it) }
             }
         }.distinctBy { it.url }
 
@@ -127,7 +135,10 @@ class HardGif : AnimeHttpSource() {
         anime.thumbnail_url = document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: document.selectFirst("video[poster]")?.attr("poster")
             ?: document.select("img").mapNotNull { img ->
-                val src = img.attr("src")
+                val src = img.attr("data-src")
+                    .ifBlank { img.attr("data-lazy-src") }
+                    .ifBlank { img.attr("data-original") }
+                    .ifBlank { img.attr("src") }
                 if (src.contains("external-preview") || src.contains("avatar") || src.contains("logo")) null else src
             }.firstOrNull()
         anime.description = document.selectFirst("meta[name='description']")?.attr("content")
@@ -160,7 +171,6 @@ class HardGif : AnimeHttpSource() {
         val pageUrl = response.request.url.toString()
         val videos = mutableListOf<Video>()
 
-        // Busca players incorporados (iframes de streams/streams_live_rp.php)
         val iframeSrc = document.selectFirst("iframe[src*='stream'], iframe[src*='player']")?.attr("src")
         val htmlToParse = if (!iframeSrc.isNullOrEmpty()) {
             val iframeUrl = fixUrl(iframeSrc)
