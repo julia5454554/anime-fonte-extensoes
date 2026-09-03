@@ -111,7 +111,27 @@ class HardGif : AnimeHttpSource() {
         val pageUrl = response.request.url.toString()
         val videos = mutableListOf<Video>()
 
-        // 1. Tags <video> e <source>
+        // 1. Extrai URLs de m3u8/mp4/webm de todo o HTML (inclui scripts)
+        val allMediaRegex = Regex("""(?:https?:)?//[^"'\s]+\.(?:m3u8|mp4|webm|gifv|gif)[^"'\s]*""")
+        allMediaRegex.findAll(document.html()).forEach { match ->
+            var url = match.value.replace("\\/", "/").replace("&amp;", "&").trim()
+            url = fixUrl(url)
+            if (url.startsWith("http") && !url.endsWith(".png") && !url.endsWith(".jpg")) {
+                if (url.contains(".m3u8")) {
+                    val base = url.substringBeforeLast(".m3u8")
+                    val resolutions = listOf("360", "480", "720", "1080")
+                    resolutions.forEach { res ->
+                        val newUrl = base.replace(Regex("""_(\d+)$"""), "_$res") + ".m3u8"
+                        videos.add(Video(newUrl, "${res}p", newUrl, videoHeaders(pageUrl)))
+                    }
+                    videos.add(Video(url, "Original", url, videoHeaders(pageUrl)))
+                } else {
+                    videos.add(Video(url, "Direto", url, videoHeaders(pageUrl)))
+                }
+            }
+        }
+
+        // 2. Tags <video> e <source>
         document.select("video, video source, source").forEach { element ->
             val rawSrc = element.attr("src").ifBlank { element.attr("data-src") }
             if (rawSrc.isNotBlank()) {
@@ -121,40 +141,24 @@ class HardGif : AnimeHttpSource() {
             }
         }
 
-        // 2. Links diretos no HTML (.mp4, .webm, .m3u8, .gifv)
-        val mediaRegex = Regex("""["']([^"']+\.(?:mp4|webm|m3u8|gifv|gif)[^"']*)["']""")
-        mediaRegex.findAll(document.html()).forEach { match ->
-            var url = match.groupValues[1].replace("\\/", "/").replace("&amp;", "&").trim()
-            if (!url.endsWith(".png") && !url.endsWith(".jpg")) {
-                url = fixUrl(url)
-                if (url.startsWith("http") && videos.none { it.videoUrl == url }) {
-                    // Se for m3u8, gerar variações de qualidade
-                    if (url.contains(".m3u8")) {
-                        val base = url.substringBeforeLast(".m3u8")
-                        val resolutions = listOf("360", "480", "720", "1080")
-                        resolutions.forEach { res ->
-                            val newUrl = base.replace(Regex("""_(\d+)$"""), "_$res") + ".m3u8"
-                            videos.add(Video(newUrl, "${res}p", newUrl, videoHeaders(pageUrl)))
-                        }
-                        videos.add(Video(url, "Original", url, videoHeaders(pageUrl)))
-                    } else {
-                        videos.add(Video(url, "Direto", url, videoHeaders(pageUrl)))
-                    }
-                }
-            }
-        }
-
-        // 3. Embeds/Iframes
+        // 3. Iframes (especialmente Reddit)
         document.select("iframe[src]").forEach { iframe ->
             val iframeUrl = fixUrl(iframe.attr("src"))
             if (iframeUrl.isNotBlank() && iframeUrl.startsWith("http")) {
+                val iframeHeaders = Headers.Builder()
+                    .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .set("Referer", pageUrl)
+                    .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+                    .set("Accept-Language", "en-US,en;q=0.5")
+                    .build()
                 try {
-                    client.newCall(GET(iframeUrl, headers)).execute().use { embedResp ->
+                    val iframeRequest = GET(iframeUrl, iframeHeaders)
+                    client.newCall(iframeRequest).execute().use { embedResp ->
                         if (embedResp.isSuccessful) {
-                            val embedDoc = embedResp.asJsoup()
-                            val embedMediaRegex = Regex("""["']([^"']+\.(?:mp4|m3u8|webm)[^"']*)["']""")
-                            embedMediaRegex.findAll(embedDoc.html()).forEach { match ->
-                                var url = match.groupValues[1].replace("\\/", "/").replace("&amp;", "&").trim()
+                            val embedHtml = embedResp.body!!.string()
+                            val embedMediaRegex = Regex("""(?:https?:)?//[^"'\s]+\.(?:m3u8|mp4|webm)[^"'\s]*""")
+                            embedMediaRegex.findAll(embedHtml).forEach { match ->
+                                var url = match.value.replace("\\/", "/").replace("&amp;", "&").trim()
                                 url = fixUrl(url)
                                 if (url.startsWith("http")) {
                                     if (url.contains(".m3u8")) {
@@ -164,6 +168,7 @@ class HardGif : AnimeHttpSource() {
                                             val newUrl = base.replace(Regex("""_(\d+)$"""), "_$res") + ".m3u8"
                                             videos.add(Video(newUrl, "${res}p (Embed)", newUrl, videoHeaders(iframeUrl)))
                                         }
+                                        videos.add(Video(url, "Original (Embed)", url, videoHeaders(iframeUrl)))
                                     } else {
                                         videos.add(Video(url, "Embed HD", url, videoHeaders(iframeUrl)))
                                     }
@@ -171,7 +176,9 @@ class HardGif : AnimeHttpSource() {
                             }
                         }
                     }
-                } catch (_: Exception) {}
+                } catch (_: Exception) {
+                    // Ignora falhas de iframe
+                }
             }
         }
 
