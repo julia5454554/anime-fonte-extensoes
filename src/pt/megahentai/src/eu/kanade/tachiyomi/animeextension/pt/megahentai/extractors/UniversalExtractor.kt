@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.pt.megahentai.extractors
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
@@ -10,6 +9,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import eu.kanade.tachiyomi.animesource.model.Video
+import keiyoushi.utils.applicationContext
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -17,10 +17,7 @@ import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-class UniversalExtractor(
-    private val client: OkHttpClient,
-    private val context: Context,
-) {
+class UniversalExtractor(private val client: OkHttpClient) {
     private val handler by lazy { Handler(Looper.getMainLooper()) }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -36,7 +33,7 @@ class UniversalExtractor(
         val headers = origRequestHeader.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }.toMutableMap()
 
         handler.post {
-            val newView = WebView(context)
+            val newView = WebView(applicationContext)
             webView = newView
             with(newView.settings) {
                 javaScriptEnabled = true
