@@ -15,7 +15,6 @@ import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -274,7 +273,7 @@ class MegaHentai :
 
     // ============================= Utilities ==============================
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
-    private val universalExtractor by lazy { UniversalExtractor(client, context) }
+    private val universalExtractor by lazy { UniversalExtractor(client) }
 
     companion object {
         private val EPISODE_NUMBER_REGEX = "(?:Epis[oó]dio\\s+)([0-9]+(?:\\.[0-9]+)?)".toRegex(RegexOption.IGNORE_CASE)
