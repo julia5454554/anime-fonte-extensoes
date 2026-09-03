@@ -36,22 +36,22 @@ class HardGif : AnimeHttpSource() {
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val elements = document.select("div.card.video-card, div.col-12:has(.video_name)")
+        checkCloudflare(response, document.html())
 
-        val animeList = elements.mapNotNull { element ->
-            val linkElement = element.selectFirst("h6.card-title a, .video_name a") ?: return@mapNotNull null
-            val rawUrl = linkElement.attr("href").trim()
-            val title = linkElement.text().trim()
+        val animeList = document.select("a[href*=/gif/]").mapNotNull { link ->
+            val rawUrl = link.attr("href").trim()
+            val title = link.text().trim()
 
             if (rawUrl.isBlank() || title.isBlank()) return@mapNotNull null
 
-            val container = element.selectFirst(".mobVideoContainer")
+            val parentCard = link.parents().firstOrNull { it.hasClass("card") || it.hasClass("col-12") }
+            val container = parentCard?.selectFirst(".mobVideoContainer")
             val screenshotsAttr = container?.attr("data-screenshots") ?: ""
             val thumbnail = Regex("""https?://[^"'\s\\]+""").find(screenshotsAttr)?.value
-                ?: element.selectFirst(".vjs-poster")?.attr("style")?.let { style ->
+                ?: parentCard?.selectFirst(".vjs-poster")?.attr("style")?.let { style ->
                     Regex("""url\((?:['"]?)(.*?)(?:['"]?)\)""").find(style)?.groupValues?.get(1)
                 }
-                ?: element.selectFirst("img")?.attr("src")
+                ?: parentCard?.selectFirst("img")?.attr("src")
 
             SAnime.create().apply {
                 setUrlWithoutDomain(rawUrl)
@@ -59,6 +59,10 @@ class HardGif : AnimeHttpSource() {
                 thumbnail_url = thumbnail?.let { fixUrl(it.replace("\\/", "/")) }
             }
         }.distinctBy { it.url }
+
+        if (animeList.isEmpty()) {
+            throw Exception("Nenhum item carregado. Clique em 'Abrir na WebView' para validar o Cloudflare.")
+        }
 
         val hasNextPage = document.selectFirst("a.next, a.nextpostslink, .pagination a.next, a[rel='next']") != null
         return AnimesPage(animeList, hasNextPage)
@@ -84,6 +88,8 @@ class HardGif : AnimeHttpSource() {
     // =========================== Anime Details ============================
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
+        checkCloudflare(response, document.html())
+
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(response.request.url.toString())
         anime.title = document.selectFirst("h6.card-title, h1, .entry-title")?.text()?.trim()
@@ -117,10 +123,11 @@ class HardGif : AnimeHttpSource() {
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
+        checkCloudflare(response, document.html())
+
         val pageUrl = response.request.url.toString()
         val videos = mutableListOf<Video>()
 
-        // 1. Extrai URLs do atributo JSON data-videos (.m3u8 / .mp4)
         val dataVideosAttr = document.selectFirst(".mobVideoContainer")?.attr("data-videos") ?: ""
         val urlRegex = Regex("""https?:\\?/\\?/[^"'\s,]+?\.(?:m3u8|mp4|webm)""")
 
@@ -132,7 +139,6 @@ class HardGif : AnimeHttpSource() {
             }
         }
 
-        // 2. Fallback para tags <source> ou <video>
         document.select("video source, video").forEach { element ->
             val rawSrc = element.attr("src").ifBlank { element.attr("data-src") }
             if (rawSrc.isNotBlank() && !rawSrc.startsWith("blob:")) {
@@ -145,6 +151,12 @@ class HardGif : AnimeHttpSource() {
     }
 
     // ============================= Utilities ==============================
+    private fun checkCloudflare(response: Response, html: String) {
+        if (response.code in listOf(403, 503) || html.contains("cf-challenge") || html.contains("Just a moment")) {
+            throw Exception("Proteção Cloudflare ativada. Toque em 'Abrir na WebView'.")
+        }
+    }
+
     private fun fixUrl(url: String): String = when {
         url.startsWith("//") -> "https:$url"
         url.startsWith("/") -> "$baseUrl$url"
