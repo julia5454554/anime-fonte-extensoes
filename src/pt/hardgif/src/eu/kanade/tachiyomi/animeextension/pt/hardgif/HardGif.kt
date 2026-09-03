@@ -31,27 +31,37 @@ class HardGif : AnimeHttpSource() {
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val elements = document.select("div.card.video-card")
+        val elements = document.select("article, div.card, div.post, div.video-card, div.item, .grid-item, div.entry")
+
         val animeList = elements.mapNotNull { element ->
-            val linkElement = element.selectFirst("a[href*='/gif/']") ?: return@mapNotNull null
-            val url = linkElement.attr("href")
-            if (url.isBlank()) return@mapNotNull null
-            val title = linkElement.text().trim().ifBlank {
-                element.selectFirst("h6.card-title.video_name")?.text()?.trim() ?: ""
+            val linkElement = element.selectFirst("a[href]") ?: return@mapNotNull null
+            val rawUrl = linkElement.attr("href")
+
+            if (rawUrl.isBlank() || rawUrl == baseUrl || rawUrl == "$baseUrl/" ||
+                rawUrl.contains("/category/") || rawUrl.contains("/tag/") || rawUrl.contains("/page/")
+            ) {
+                return@mapNotNull null
             }
+
+            val title = element.selectFirst("h1, h2, h3, h4, h5, h6, .card-title, .title, .entry-title")?.text()?.trim()
+                ?: linkElement.attr("title").ifBlank { linkElement.text() }.trim()
+
             if (title.isBlank()) return@mapNotNull null
 
-            val thumbnail = element.selectFirst("img")?.attr("src")
-                ?: element.selectFirst("video[poster]")?.attr("poster")
+            val imgElement = element.selectFirst("img, video")
+            val thumbnail = imgElement?.attr("data-src")
+                ?: imgElement?.attr("data-lazy-src")
+                ?: imgElement?.attr("src")
+                ?: imgElement?.attr("poster")
 
             SAnime.create().apply {
-                setUrlWithoutDomain(url)
+                setUrlWithoutDomain(rawUrl)
                 this.title = title
                 thumbnail_url = thumbnail?.let { fixUrl(it) }
             }
         }.distinctBy { it.url }
 
-        val hasNextPage = document.selectFirst("a.next, a.nextpostslink, .pagination a.next") != null
+        val hasNextPage = document.selectFirst("a.next, a.nextpostslink, .pagination a.next, a:contains(Next), a:contains(Próxima), .nav-previous a") != null
         return AnimesPage(animeList, hasNextPage)
     }
 
@@ -63,9 +73,9 @@ class HardGif : AnimeHttpSource() {
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val encodedQuery = query.trim().replace(" ", "+")
         val url = if (page == 1) {
-            "$baseUrl/?search=$encodedQuery"
+            "$baseUrl/?s=$encodedQuery"
         } else {
-            "$baseUrl/page/$page/?search=$encodedQuery"
+            "$baseUrl/page/$page/?s=$encodedQuery"
         }
         return GET(url, headers)
     }
@@ -77,7 +87,7 @@ class HardGif : AnimeHttpSource() {
         val document = response.asJsoup()
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(response.request.url.toString())
-        anime.title = document.selectFirst("h1, h2.entry-title, .post-title")?.text()?.trim()
+        anime.title = document.selectFirst("h1, h2.entry-title, .post-title, .card-title")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")
             ?: "Sem título"
         anime.thumbnail_url = document.selectFirst("meta[property='og:image']")?.attr("content")
@@ -87,7 +97,7 @@ class HardGif : AnimeHttpSource() {
             ?: document.selectFirst("div.entry-content, div.post-content, p")?.text()
 
         val genres = mutableListOf<String>()
-        document.select("a[rel='category tag'], a[rel='tag'], a[href*='/category/']").forEach {
+        document.select("a[rel='category tag'], a[rel='tag'], a[href*='/category/'], a[href*='/tag/']").forEach {
             genres.add(it.text().trim())
         }
         anime.genre = genres.distinct().joinToString(", ")
@@ -99,7 +109,7 @@ class HardGif : AnimeHttpSource() {
     override fun episodeListParse(response: Response): List<SEpisode> {
         val episode = SEpisode.create().apply {
             setUrlWithoutDomain(response.request.url.toString())
-            name = "Vídeo / GIF"
+            name = "Assistir Vídeo / GIF"
             episode_number = 1f
         }
         return listOf(episode)
@@ -111,73 +121,44 @@ class HardGif : AnimeHttpSource() {
         val pageUrl = response.request.url.toString()
         val videos = mutableListOf<Video>()
 
-        // 1. Extrai URLs de m3u8/mp4/webm de todo o HTML (inclui scripts)
-        val allMediaRegex = Regex("""(?:https?:)?//[^"'\s]+\.(?:m3u8|mp4|webm|gifv|gif)[^"'\s]*""")
-        allMediaRegex.findAll(document.html()).forEach { match ->
-            var url = match.value.replace("\\/", "/").replace("&amp;", "&").trim()
-            url = fixUrl(url)
-            if (url.startsWith("http") && !url.endsWith(".png") && !url.endsWith(".jpg")) {
-                if (url.contains(".m3u8")) {
-                    val base = url.substringBeforeLast(".m3u8")
-                    val resolutions = listOf("360", "480", "720", "1080")
-                    resolutions.forEach { res ->
-                        val newUrl = base.replace(Regex("""_(\d+)$"""), "_$res") + ".m3u8"
-                        videos.add(Video(newUrl, "${res}p", newUrl, videoHeaders(pageUrl)))
-                    }
-                    videos.add(Video(url, "Original", url, videoHeaders(pageUrl)))
-                } else {
-                    videos.add(Video(url, "Direto", url, videoHeaders(pageUrl)))
-                }
-            }
-        }
-
-        // 2. Tags <video> e <source>
+        // 1. Tags de mídia do HTML
         document.select("video, video source, source").forEach { element ->
             val rawSrc = element.attr("src").ifBlank { element.attr("data-src") }
             if (rawSrc.isNotBlank()) {
                 val src = fixUrl(rawSrc)
-                val quality = element.attr("label").ifBlank { "HD" }
+                val quality = element.attr("label").ifBlank { "Vídeo HD" }
                 videos.add(Video(src, quality, src, videoHeaders(pageUrl)))
             }
         }
 
-        // 3. Iframes (especialmente Reddit)
+        // 2. Links diretos via Regex no HTML
+        val allMediaRegex = Regex("""(?:https?:)?//[^"'\s]+\.(?:m3u8|mp4|webm|gifv)[^"'\s]*""")
+        allMediaRegex.findAll(document.html()).forEach { match ->
+            var url = match.value.replace("\\/", "/").replace("&amp;", "&").trim()
+            url = fixUrl(url)
+            if (url.startsWith("http") && !url.endsWith(".png") && !url.endsWith(".jpg")) {
+                videos.add(Video(url, "Mídia Direta", url, videoHeaders(pageUrl)))
+            }
+        }
+
+        // 3. Iframe Embeds
         document.select("iframe[src]").forEach { iframe ->
             val iframeUrl = fixUrl(iframe.attr("src"))
             if (iframeUrl.isNotBlank() && iframeUrl.startsWith("http")) {
-                val iframeHeaders = Headers.Builder()
-                    .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .set("Referer", pageUrl)
-                    .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-                    .set("Accept-Language", "en-US,en;q=0.5")
-                    .build()
                 try {
-                    val iframeRequest = GET(iframeUrl, iframeHeaders)
-                    client.newCall(iframeRequest).execute().use { embedResp ->
+                    client.newCall(GET(iframeUrl, headers)).execute().use { embedResp ->
                         if (embedResp.isSuccessful) {
-                            val embedHtml = embedResp.body!!.string()
-                            val embedMediaRegex = Regex("""(?:https?:)?//[^"'\s]+\.(?:m3u8|mp4|webm)[^"'\s]*""")
-                            embedMediaRegex.findAll(embedHtml).forEach { match ->
-                                var url = match.value.replace("\\/", "/").replace("&amp;", "&").trim()
-                                url = fixUrl(url)
-                                if (url.startsWith("http")) {
-                                    if (url.contains(".m3u8")) {
-                                        val base = url.substringBeforeLast(".m3u8")
-                                        val resolutions = listOf("360", "480", "720", "1080")
-                                        resolutions.forEach { res ->
-                                            val newUrl = base.replace(Regex("""_(\d+)$"""), "_$res") + ".m3u8"
-                                            videos.add(Video(newUrl, "${res}p (Embed)", newUrl, videoHeaders(iframeUrl)))
-                                        }
-                                        videos.add(Video(url, "Original (Embed)", url, videoHeaders(iframeUrl)))
-                                    } else {
-                                        videos.add(Video(url, "Embed HD", url, videoHeaders(iframeUrl)))
-                                    }
+                            val embedDoc = embedResp.asJsoup()
+                            embedDoc.select("video source, video").forEach { element ->
+                                val rawSrc = element.attr("src").ifBlank { element.attr("data-src") }
+                                if (rawSrc.isNotBlank()) {
+                                    val src = fixUrl(rawSrc)
+                                    videos.add(Video(src, "Embed HD", src, videoHeaders(iframeUrl)))
                                 }
                             }
                         }
                     }
                 } catch (_: Exception) {
-                    // Ignora falhas de iframe
                 }
             }
         }
