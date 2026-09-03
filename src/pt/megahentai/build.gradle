@@ -1,0 +1,14 @@
+ext {
+    extName = 'Mega Hentai'
+    extClass = '.MegaHentai'
+    themePkg = 'dooplay'
+    baseUrl = 'https://megahentai.biz'
+    overrideVersionCode = 1
+    isNsfw = true
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+dependencies {
+    implementation(project(":lib:playlistutils"))
+}
