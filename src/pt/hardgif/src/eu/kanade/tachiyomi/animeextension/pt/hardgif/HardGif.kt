@@ -29,9 +29,7 @@ class HardGif : AnimeHttpSource() {
         .add("Referer", "$baseUrl/")
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int): Request {
-        return GET(baseUrl, headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request = GET(baseUrl, headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
@@ -86,7 +84,6 @@ class HardGif : AnimeHttpSource() {
             throw Exception("Nenhum item encontrado. Abra na WebView para concluir a verificação do Cloudflare.")
         }
 
-        // Retorna false para indicar que não há mais páginas HTML padrão, evitando o erro 404
         return AnimesPage(animeList, false)
     }
 
