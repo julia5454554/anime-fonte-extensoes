@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.pt.megahentai
 import aniyomi.lib.bloggerextractor.BloggerExtractor
 import eu.kanade.tachiyomi.animeextension.pt.megahentai.extractors.UniversalExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -11,7 +12,6 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.bodyString
-import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -28,14 +28,14 @@ class MegaHentai :
     ) {
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/hentai", headers)
+    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/hentai/", headers)
+
+    override fun popularAnimeParse(response: Response): AnimesPage = latestUpdatesParse(response)
 
     // =============================== Latest ===============================
-    // O seletor padrão do DooPlay pode não funcionar, então usamos o link rel=next
     override fun latestUpdatesNextPageSelector() = "link[rel=next]"
 
     // =============================== Search ===============================
-    // A busca padrão do DooPlay usa ?s= e deve funcionar, mas mantemos a sobrescrita
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val url = if (page == 1) {
             "$baseUrl/?s=${query.replace(" ", "+")}"
@@ -202,8 +202,14 @@ class MegaHentai :
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
-        val players = document.select("ul#playeroptionsul li")
-        if (players.isNotEmpty()) return players.parallelCatchingFlatMapBlocking(::getPlayerVideos)
+
+        // Seleciona apenas o player ativo (classe "on"), se existir
+        val activePlayer = document.select("ul#playeroptionsul li.on").firstOrNull()
+            ?: document.select("ul#playeroptionsul li").firstOrNull()
+
+        if (activePlayer != null) {
+            return runBlocking { getPlayerVideos(activePlayer) }
+        }
 
         // Fallback: tenta extrair iframe diretamente
         val iframe = document.selectFirst("iframe[src]")
@@ -219,16 +225,7 @@ class MegaHentai :
     }
 
     private suspend fun getPlayerVideos(player: Element): List<Video> {
-        val name = player.selectFirst("span.title")!!.text()
-            .run {
-                when (this.uppercase()) {
-                    "SD" -> "360p"
-                    "HD" -> "720p"
-                    "SD/HD", "SD / HD" -> "720p"
-                    "FHD", "FULLHD", "FULLHD / HLS" -> "1080p"
-                    else -> this
-                }
-            }
+        val name = player.selectFirst("span")?.text()?.trim() ?: "Player"
 
         val url = getPlayerUrl(player)
 
