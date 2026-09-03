@@ -30,7 +30,7 @@ class HardGif : AnimeHttpSource() {
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
-        val url = if (page == 1) baseUrl else "$baseUrl/page/$page/"
+        val url = if (page == 1) baseUrl else "$baseUrl/?page=$page"
         return GET(url, headers)
     }
 
@@ -38,29 +38,35 @@ class HardGif : AnimeHttpSource() {
         val document = response.asJsoup()
         checkCloudflare(response, document.html())
 
-        // Estratégia 1: Selecionar por estrutura de cards ou elementos de post
-        var animeList = document.select("article, .card, .video-card, .post, div[class*='col-'], .item").mapNotNull { card ->
-            val link = card.selectFirst("h1 a, h2 a, h3 a, h4 a, h5 a, h6 a, .title a, a[href*='/gif/'], a[href*='/video/'], a.card-link")
-                ?: card.selectFirst("a[href]") ?: return@mapNotNull null
-
+        val animeList = document.select("a[href]").mapNotNull { link ->
             val rawUrl = link.attr("href").trim()
-            if (rawUrl.isBlank() || rawUrl == "#" || rawUrl.contains("/category/") || rawUrl.contains("/tag/")) {
+
+            // Descarta links do sistema, navegação, categorias, imagens diretas e autor
+            val isSystemLink = rawUrl.isBlank() || rawUrl == "#" || rawUrl == baseUrl || rawUrl == "$baseUrl/" ||
+                rawUrl.contains("/category/") || rawUrl.contains("/tag/") || rawUrl.contains("/author/") ||
+                rawUrl.contains("/page/") || rawUrl.contains("/wp-") ||
+                rawUrl.matches(Regex(""".*\.(png|jpg|jpeg|gif|css|js|svg)$""", RegexOption.IGNORE_CASE))
+
+            if (isSystemLink) return@mapNotNull null
+
+            // Captura o título da tag <a>, atributo 'title' ou 'alt' da imagem interna
+            val title = link.text().trim().ifBlank {
+                link.attr("title").trim().ifBlank {
+                    link.selectFirst("img")?.attr("alt")?.trim() ?: ""
+                }
+            }
+
+            // Descarta itens sem título válido ou muito curtos
+            if (title.isBlank() || title.length < 3 || title.equals("Sem título", ignoreCase = true)) {
                 return@mapNotNull null
             }
 
-            val title = link.text().trim().ifBlank {
-                card.selectFirst("h1, h2, h3, h4, h5, h6, .title, .card-title")?.text()?.trim() ?: ""
-            }
-            if (title.isBlank()) return@mapNotNull null
-
-            val container = card.selectFirst(".mobVideoContainer")
-            val screenshotsAttr = container?.attr("data-screenshots") ?: ""
-            val thumbnail = Regex("""https?://[^"'\s\\]+""").find(screenshotsAttr)?.value
-                ?: card.selectFirst(".vjs-poster")?.attr("style")?.let { style ->
-                    Regex("""url\((?:['"]?)(.*?)(?:['"]?)\)""").find(style)?.groupValues?.get(1)
-                }
-                ?: card.selectFirst("img")?.attr("src")
-                ?: card.selectFirst("img")?.attr("data-src")
+            // Extrai thumbnail da imagem ou do container do post
+            val parent = link.parent()
+            val thumbnail = link.selectFirst("img")?.attr("src")
+                ?: link.selectFirst("img")?.attr("data-src")
+                ?: parent?.selectFirst("img")?.attr("src")
+                ?: parent?.selectFirst("img")?.attr("data-src")
 
             SAnime.create().apply {
                 setUrlWithoutDomain(rawUrl)
@@ -69,32 +75,12 @@ class HardGif : AnimeHttpSource() {
             }
         }.distinctBy { it.url }
 
-        // Estratégia 2: Fallback genérico para links de posts diretamente na página
-        if (animeList.isEmpty()) {
-            animeList = document.select("a[href]").mapNotNull { link ->
-                val rawUrl = link.attr("href").trim()
-                val title = link.text().trim()
-
-                val isInvalid = rawUrl.isBlank() || title.length < 3 ||
-                    rawUrl == baseUrl || rawUrl == "$baseUrl/" ||
-                    rawUrl.contains("/category/") || rawUrl.contains("/tag/") ||
-                    rawUrl.contains("/page/") || rawUrl.startsWith("#") ||
-                    rawUrl.startsWith("javascript:")
-
-                if (isInvalid) return@mapNotNull null
-
-                SAnime.create().apply {
-                    setUrlWithoutDomain(rawUrl)
-                    this.title = title
-                }
-            }.distinctBy { it.url }
+        if (animeList.isEmpty() && response.request.url.toString() == "$baseUrl/") {
+            throw Exception("Nenhum item encontrado. Abra na WebView para concluir a verificação do Cloudflare.")
         }
 
-        if (animeList.isEmpty()) {
-            throw Exception("Nenhum item encontrado. Abra na WebView para concluir o desafio do Cloudflare.")
-        }
-
-        return AnimesPage(animeList, animeList.isNotEmpty())
+        // Se for a primeira página e retornar itens, permite tentar próxima; caso contrário encerra a paginação
+        return AnimesPage(animeList, animeList.isNotEmpty() && response.request.url.toString() == "$baseUrl/")
     }
 
     // =============================== Latest ===============================
@@ -107,7 +93,7 @@ class HardGif : AnimeHttpSource() {
         val url = if (page == 1) {
             "$baseUrl/?s=$encodedQuery"
         } else {
-            "$baseUrl/page/$page/?s=$encodedQuery"
+            "$baseUrl/?s=$encodedQuery&page=$page"
         }
         return GET(url, headers)
     }
@@ -121,9 +107,9 @@ class HardGif : AnimeHttpSource() {
 
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(response.request.url.toString())
-        anime.title = document.selectFirst("h6.card-title, h1, .entry-title")?.text()?.trim()
+        anime.title = document.selectFirst("h1, h2, h6.card-title, .entry-title")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")
-            ?: "Sem título"
+            ?: "Vídeo"
         anime.thumbnail_url = document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: document.selectFirst("video[poster]")?.attr("poster")
             ?: document.selectFirst("img")?.attr("src")
@@ -143,7 +129,7 @@ class HardGif : AnimeHttpSource() {
     override fun episodeListParse(response: Response): List<SEpisode> {
         val episode = SEpisode.create().apply {
             setUrlWithoutDomain(response.request.url.toString())
-            name = "Assistir Vídeo / GIF"
+            name = "Assistir Mídia"
             episode_number = 1f
         }
         return listOf(episode)
