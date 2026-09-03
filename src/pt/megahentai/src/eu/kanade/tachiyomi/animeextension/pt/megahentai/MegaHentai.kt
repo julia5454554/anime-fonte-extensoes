@@ -273,7 +273,6 @@ class MegaHentai :
 
     // ============================= Utilities ==============================
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
-    // Correção: passar o context para o UniversalExtractor
     private val universalExtractor by lazy { UniversalExtractor(client, context) }
 
     companion object {
