@@ -38,6 +38,7 @@ class HardGif : AnimeHttpSource() {
         val document = response.asJsoup()
         checkCloudflare(response, document.html())
 
+        // Captura todos os links de posts (/gif/...)
         val animeList = document.select("a[href*=/gif/]").mapNotNull { link ->
             val rawUrl = link.attr("href").trim()
             val title = link.text().trim()
@@ -61,10 +62,11 @@ class HardGif : AnimeHttpSource() {
         }.distinctBy { it.url }
 
         if (animeList.isEmpty()) {
-            throw Exception("Nenhum item carregado. Clique em 'Abrir na WebView' para validar o Cloudflare.")
+            throw Exception("Nenhum item encontrado. Verifique a conexão ou abra na WebView para o Cloudflare.")
         }
 
-        val hasNextPage = document.selectFirst("a.next, a.nextpostslink, .pagination a.next, a[rel='next']") != null
+        // Para scroll infinito: enquanto a página retornar itens, consideramos que existe próxima página
+        val hasNextPage = animeList.isNotEmpty()
         return AnimesPage(animeList, hasNextPage)
     }
 
