@@ -9,16 +9,6 @@ ext {
 
 apply plugin: "kei.plugins.extension.legacy"
 
-android {
-    defaultConfig {
-        buildConfigField "String", "KAISVA", '"https://c-kai-8090.amarullz.com"'
-        buildConfigField "String", "KISSKH_API", '"https://script.google.com/macros/s/AKfycbzn8B31PuDxzaMa9_CQ0VGEDasFqfzI5bXvjaIZH4DM8DNq9q6xj1ALvZNz_JT3jF0suA/exec?id="'
-        buildConfigField "String", "KISSKH_SUB_API", '"https://script.google.com/macros/s/AKfycbyq6hTj0ZhlinYC6xbggtgo166tp6XaDKBCGtnYk8uOfYBUFwwxBui0sGXiu_zIFmA/exec?id="'
-        buildConfigField "String", "MEGACLOUD_API", '"https://script.google.com/macros/s/AKfycbxHbYHbrGMXYD2-bC-C43D3njIbU-wGiYQuJL61H4vyy6YVXkybMNNEPJNPPuZrD1gRVA/exec"'
-        buildConfigField "String", "TMDB_API", '"null"'
-    }
-}
-
 dependencies {
     implementation(project(":lib:bloggerextractor"))
     implementation(project(":lib:playlistutils"))
