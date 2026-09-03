@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.pt.megahentai
 
+import eu.kanade.tachiyomi.animeextension.pt.megahentai.extractors.UniversalExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -11,7 +12,6 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import eu.kanade.tachiyomi.animeextension.pt.megahentai.extractors.UniversalExtractor
 
 class MegaHentai : AnimeHttpSource() {
 
