@@ -27,15 +27,15 @@ class HardGif : AnimeHttpSource() {
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
         .add("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
         .add("Referer", "$baseUrl/")
+        .add("Cookie", "age_verified=1; age_gate=1; over18=1; age_check=1; wordpress_eligibility=1; is_adult=1")
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request = GET(baseUrl, headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        checkCloudflare(response, document.html())
+        checkCloudflareAndAgeGate(response, document.html())
 
-        // Seleciona cards ou links específicos de posts
         val elements = document.select(".card, article, .post, .mobVideoContainer, div[class*='col-']")
             .ifEmpty { document.select("a[href*='/gif/'], a[href*='/video/']") }
 
@@ -50,7 +50,6 @@ class HardGif : AnimeHttpSource() {
             val rawUrl = link.attr("href").trim()
             val absoluteUrl = fixUrl(rawUrl)
 
-            // Aceita apenas links diretos de posts/gifs e ignora sistema/autor/categorias
             val isInvalidLink = rawUrl.isBlank() ||
                 rawUrl == "#" ||
                 absoluteUrl == baseUrl ||
@@ -68,12 +67,10 @@ class HardGif : AnimeHttpSource() {
                 element.selectFirst("h1, h2, h3, h4, h5, h6, .card-title, .title")?.text()?.trim() ?: ""
             }
 
-            // Descarta títulos inválidos ou genéricos
             if (title.isBlank() || title.length < 3 || title.equals("Sem título", ignoreCase = true) || title.equals("Vídeo", ignoreCase = true)) {
                 return@mapNotNull null
             }
 
-            // Captura a capa ignorando avatares e logos
             val container = if (element.hasClass("mobVideoContainer")) element else element.selectFirst(".mobVideoContainer")
             val screenshotsAttr = container?.attr("data-screenshots") ?: ""
 
@@ -96,7 +93,7 @@ class HardGif : AnimeHttpSource() {
         }.distinctBy { it.url }
 
         if (animeList.isEmpty()) {
-            throw Exception("Nenhum item encontrado. Abra na WebView para concluir a verificação do Cloudflare.")
+            throw Exception("Nenhum item encontrado. Abra na WebView para aceitar a verificação de idade e passar o Cloudflare.")
         }
 
         return AnimesPage(animeList, false)
@@ -117,7 +114,7 @@ class HardGif : AnimeHttpSource() {
     // =========================== Anime Details ============================
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
-        checkCloudflare(response, document.html())
+        checkCloudflareAndAgeGate(response, document.html())
 
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(response.request.url.toString())
@@ -155,7 +152,7 @@ class HardGif : AnimeHttpSource() {
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        checkCloudflare(response, document.html())
+        checkCloudflareAndAgeGate(response, document.html())
 
         val pageUrl = response.request.url.toString()
         val videos = mutableListOf<Video>()
@@ -183,9 +180,12 @@ class HardGif : AnimeHttpSource() {
     }
 
     // ============================= Utilities ==============================
-    private fun checkCloudflare(response: Response, html: String) {
+    private fun checkCloudflareAndAgeGate(response: Response, html: String) {
         if (response.code in listOf(403, 503) || html.contains("cf-challenge") || html.contains("Just a moment")) {
             throw Exception("Proteção Cloudflare ativada. Toque em 'Abrir na WebView'.")
+        }
+        if (html.contains("VERIFICATION REQUIRED") || html.contains("I AM 18+")) {
+            throw Exception("Verificação de idade necessária. Toque em 'Abrir na WebView' e clique em 'I AM 18+' para salvar o acesso.")
         }
     }
 
@@ -200,5 +200,6 @@ class HardGif : AnimeHttpSource() {
         .set("Referer", pageUrl)
         .set("Origin", baseUrl)
         .set("Accept", "*/*")
+        .set("Cookie", "age_verified=1; age_gate=1; over18=1; age_check=1; wordpress_eligibility=1; is_adult=1")
         .build()
 }
