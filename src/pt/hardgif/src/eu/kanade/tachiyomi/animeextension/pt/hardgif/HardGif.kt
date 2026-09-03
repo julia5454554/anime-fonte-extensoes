@@ -45,7 +45,6 @@ class HardGif : AnimeHttpSource() {
 
             if (rawUrl.isBlank() || title.isBlank()) return@mapNotNull null
 
-            // Extrai a thumbnail do data-screenshots ou do poster
             val container = element.selectFirst(".mobVideoContainer")
             val screenshotsAttr = container?.attr("data-screenshots") ?: ""
             val thumbnail = Regex("""https?://[^"'\s\\]+""").find(screenshotsAttr)?.value
@@ -124,7 +123,7 @@ class HardGif : AnimeHttpSource() {
         // 1. Extrai URLs do atributo JSON data-videos (.m3u8 / .mp4)
         val dataVideosAttr = document.selectFirst(".mobVideoContainer")?.attr("data-videos") ?: ""
         val urlRegex = Regex("""https?:\\?/\\?/[^"'\s,]+?\.(?:m3u8|mp4|webm)""")
-        
+
         urlRegex.findAll(dataVideosAttr + document.html()).forEach { match ->
             val cleanUrl = match.value.replace("\\/", "/").replace("&amp;", "&").trim()
             if (cleanUrl.startsWith("http")) {
