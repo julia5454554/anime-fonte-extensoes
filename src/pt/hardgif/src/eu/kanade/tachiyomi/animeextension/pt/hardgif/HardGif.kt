@@ -23,7 +23,10 @@ class HardGif : AnimeHttpSource() {
     override val client: OkHttpClient = network.cloudflareClient
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+        .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36")
+        .add("sec-ch-ua", "\"Chromium\";v=\"139\", \"Not;A=Brand\";v=\"99\"")
+        .add("sec-ch-ua-mobile", "?1")
+        .add("sec-ch-ua-platform", "\"Android\"")
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
         .add("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
         .add("Referer", "$baseUrl/")
@@ -157,10 +160,23 @@ class HardGif : AnimeHttpSource() {
         val pageUrl = response.request.url.toString()
         val videos = mutableListOf<Video>()
 
+        // Busca players incorporados (iframes de streams/streams_live_rp.php)
+        val iframeSrc = document.selectFirst("iframe[src*='stream'], iframe[src*='player']")?.attr("src")
+        val htmlToParse = if (!iframeSrc.isNullOrEmpty()) {
+            val iframeUrl = fixUrl(iframeSrc)
+            try {
+                client.newCall(GET(iframeUrl, videoHeaders(pageUrl))).execute().asJsoup().html()
+            } catch (e: Exception) {
+                document.html()
+            }
+        } else {
+            document.html()
+        }
+
         val dataVideosAttr = document.selectFirst(".mobVideoContainer")?.attr("data-videos") ?: ""
         val urlRegex = Regex("""https?:\\?/\\?/[^"'\s,]+?\.(?:m3u8|mp4|webm)""")
 
-        urlRegex.findAll(dataVideosAttr + document.html()).forEach { match ->
+        urlRegex.findAll(dataVideosAttr + htmlToParse).forEach { match ->
             val cleanUrl = match.value.replace("\\/", "/").replace("&amp;", "&").trim()
             if (cleanUrl.startsWith("http")) {
                 val quality = if (cleanUrl.contains(".m3u8")) "HLS Playlist (HD)" else "MP4 Direct"
@@ -196,7 +212,10 @@ class HardGif : AnimeHttpSource() {
     }
 
     private fun videoHeaders(pageUrl: String): Headers = Headers.Builder()
-        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+        .set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36")
+        .set("sec-ch-ua", "\"Chromium\";v=\"139\", \"Not;A=Brand\";v=\"99\"")
+        .set("sec-ch-ua-mobile", "?1")
+        .set("sec-ch-ua-platform", "\"Android\"")
         .set("Referer", pageUrl)
         .set("Origin", baseUrl)
         .set("Accept", "*/*")
