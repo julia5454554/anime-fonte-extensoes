@@ -273,7 +273,8 @@ class MegaHentai :
 
     // ============================= Utilities ==============================
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
-    private val universalExtractor by lazy { UniversalExtractor(client) }
+    // Correção: passar o context para o UniversalExtractor
+    private val universalExtractor by lazy { UniversalExtractor(client, context) }
 
     companion object {
         private val EPISODE_NUMBER_REGEX = "(?:Epis[oó]dio\\s+)([0-9]+(?:\\.[0-9]+)?)".toRegex(RegexOption.IGNORE_CASE)
