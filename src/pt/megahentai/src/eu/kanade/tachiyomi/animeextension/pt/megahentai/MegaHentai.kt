@@ -8,11 +8,14 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.asJsoup
+import eu.kanade.tachiyomi.network.awaitSuccess
+import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.bodyString
 import keiyoushi.utils.parallelCatchingFlatMapBlocking
 import keiyoushi.utils.useAsJsoup
 import kotlinx.coroutines.runBlocking
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -29,9 +32,11 @@ class MegaHentai :
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/hentai", headers)
 
     // =============================== Latest ===============================
-    override fun latestUpdatesNextPageSelector() = "div.pagination > a.arrow_pag > i.fa-caret-right"
+    // O seletor padrão do DooPlay pode não funcionar, então usamos o link rel=next
+    override fun latestUpdatesNextPageSelector() = "link[rel=next]"
 
     // =============================== Search ===============================
+    // A busca padrão do DooPlay usa ?s= e deve funcionar, mas mantemos a sobrescrita
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val url = if (page == 1) {
             "$baseUrl/?s=${query.replace(" ", "+")}"
