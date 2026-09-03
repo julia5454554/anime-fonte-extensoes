@@ -1,15 +1,28 @@
-package eu.kanade.tachiyomi.animeextension;
+plugins {
+    id 'com.android.application'
+    id 'kotlin-android'
+}
 
-/* JADX INFO: loaded from: classes4.dex */
-public final class BuildConfig {
-    public static final String APPLICATION_ID = "eu.kanade.tachiyomi.animeextension.pt.hentailegendado";
-    public static final String BUILD_TYPE = "debug";
-    public static final boolean DEBUG = Boolean.parseBoolean("true");
-    public static final String KAISVA = "https://c-kai-8090.amarullz.com";
-    public static final String KISSKH_API = "https://script.google.com/macros/s/AKfycbzn8B31PuDxzaMa9_CQ0VGEDasFqfzI5bXvjaIZH4DM8DNq9q6xj1ALvZNz_JT3jF0suA/exec?id=";
-    public static final String KISSKH_SUB_API = "https://script.google.com/macros/s/AKfycbyq6hTj0ZhlinYC6xbggtgo166tp6XaDKBCGtnYk8uOfYBUFwwxBui0sGXiu_zIFmA/exec?id=";
-    public static final String MEGACLOUD_API = "https://script.google.com/macros/s/AKfycbxHbYHbrGMXYD2-bC-C43D3njIbU-wGiYQuJL61H4vyy6YVXkybMNNEPJNPPuZrD1gRVA/exec";
-    public static final String TMDB_API = "null";
-    public static final int VERSION_CODE = 1;
-    public static final String VERSION_NAME = "14.1";
+android {
+    namespace 'eu.kanade.tachiyomi.animeextension.pt.hentailegendado'
+    compileSdkVersion 34
+
+    defaultConfig {
+        applicationId "eu.kanade.tachiyomi.animeextension.pt.hentailegendado"
+        minSdkVersion 21
+        targetSdkVersion 34
+        versionCode 1
+        versionName "14.1"
+
+        // Injeção das variáveis no BuildConfig (sintaxe Groovy)
+        buildConfigField "String", "KAISVA", '"https://c-kai-8090.amarullz.com"'
+        buildConfigField "String", "KISSKH_API", '"https://script.google.com/macros/s/AKfycbzn8B31PuDxzaMa9_CQ0VGEDasFqfzI5bXvjaIZH4DM8DNq9q6xj1ALvZNz_JT3jF0suA/exec?id="'
+        buildConfigField "String", "KISSKH_SUB_API", '"https://script.google.com/macros/s/AKfycbyq6hTj0ZhlinYC6xbggtgo166tp6XaDKBCGtnYk8uOfYBUFwwxBui0sGXiu_zIFmA/exec?id="'
+        buildConfigField "String", "MEGACLOUD_API", '"https://script.google.com/macros/s/AKfycbxHbYHbrGMXYD2-bC-C43D3njIbU-wGiYQuJL61H4vyy6YVXkybMNNEPJNPPuZrD1gRVA/exec"'
+        buildConfigField "String", "TMDB_API", '"null"'
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
 }
