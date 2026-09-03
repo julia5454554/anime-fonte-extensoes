@@ -1,12 +1,14 @@
 package eu.kanade.tachiyomi.animeextension.pt.megahentai
 
 import eu.kanade.tachiyomi.animeextension.pt.megahentai.extractors.UniversalExtractor
+import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.asJsoup
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
@@ -25,7 +27,7 @@ class MegaHentai : AnimeHttpSource() {
         add("Referer", baseUrl)
     }
 
-    // ==================== LISTAGEM ====================
+    // ==================== LISTAGEM (LATEST) ====================
     override fun latestUpdatesRequest(page: Int): Request {
         val url = if (page == 1) "$baseUrl/hentai/" else "$baseUrl/hentai/page/$page/"
         return GET(url, headers)
@@ -39,15 +41,10 @@ class MegaHentai : AnimeHttpSource() {
         return AnimesPage(animes, hasNextPage)
     }
 
-    private fun parseAnimeFromCard(element: Element): SAnime {
-        val anime = SAnime.create()
-        anime.title = element.select(".data h3 a").text().trim()
-        val url = element.select(".poster a").attr("href")
-        anime.setUrlWithoutDomain(url)
-        val img = element.select(".poster img").first()
-        anime.thumbnail_url = img?.attr("data-src") ?: img?.attr("src") ?: ""
-        return anime
-    }
+    // ==================== LISTAGEM (POPULAR) ====================
+    override fun popularAnimeRequest(page: Int): Request = latestUpdatesRequest(page)
+
+    override fun popularAnimeParse(response: Response): AnimesPage = latestUpdatesParse(response)
 
     // ==================== BUSCA ====================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -65,6 +62,16 @@ class MegaHentai : AnimeHttpSource() {
         val animes = items.map { element -> parseAnimeFromCard(element) }
         val hasNextPage = document.select("link[rel=next]").first() != null
         return AnimesPage(animes, hasNextPage)
+    }
+
+    private fun parseAnimeFromCard(element: Element): SAnime {
+        val anime = SAnime.create()
+        anime.title = element.select(".data h3 a").text().trim()
+        val url = element.select(".poster a").attr("href")
+        anime.setUrlWithoutDomain(url)
+        val img = element.select(".poster img").first()
+        anime.thumbnail_url = img?.attr("data-src") ?: img?.attr("src") ?: ""
+        return anime
     }
 
     // ==================== DETALHES ====================
