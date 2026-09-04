@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.pt.megahentai
 
-import android.app.Application
-import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -10,22 +8,17 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.lib.bloggerextractor.BloggerExtractor
-import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import kotlinx.coroutines.runBlocking
-import okhttp3.FormBody
-import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
-import java.lang.Exception
 
-class MegaHentai : ConfigurableAnimeSource, ParsedAnimeHttpSource() {
+class MegaHentai :
+    ParsedAnimeHttpSource(),
+    ConfigurableAnimeSource {
 
     override val name = "Mega Hentai"
 
@@ -40,9 +33,7 @@ class MegaHentai : ConfigurableAnimeSource, ParsedAnimeHttpSource() {
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int): Request {
-        return GET("$baseUrl/hentai/page/$page/", headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/hentai/page/$page/", headers)
 
     override fun popularAnimeSelector(): String = "div.result-item article, div.items article"
 
@@ -99,7 +90,6 @@ class MegaHentai : ConfigurableAnimeSource, ParsedAnimeHttpSource() {
                         .replace("\\/", "/")
 
                     if (embedUrl.isNotBlank() && embedUrl.startsWith("http")) {
-                        // Uso do runBlocking para resolver o erro da suspend function no Kotlin
                         val videos = runBlocking { extractVideosFromEmbed(embedUrl, playerListName) }
                         videoList.addAll(videos)
                     }
