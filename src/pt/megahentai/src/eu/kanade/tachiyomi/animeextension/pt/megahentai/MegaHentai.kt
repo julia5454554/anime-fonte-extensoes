@@ -101,12 +101,10 @@ class MegaHentai :
         return videoList
     }
 
-    private fun extractVideosFromEmbed(embedUrl: String, playerName: String): List<Video> {
-        return if ("blogger.com" in embedUrl || "blogspot.com" in embedUrl) {
-            listOf(Video(embedUrl, playerName, embedUrl))
-        } else {
-            emptyList()
-        }
+    private fun extractVideosFromEmbed(embedUrl: String, playerName: String): List<Video> = if ("blogger.com" in embedUrl || "blogspot.com" in embedUrl) {
+        listOf(Video(embedUrl, playerName, embedUrl))
+    } else {
+        emptyList()
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()
