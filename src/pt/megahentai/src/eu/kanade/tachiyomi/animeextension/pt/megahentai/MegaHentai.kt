@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.animeextension.pt.megahentai
 import aniyomi.lib.bloggerextractor.BloggerExtractor
 import eu.kanade.tachiyomi.animeextension.pt.megahentai.extractors.UniversalExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
@@ -184,14 +185,12 @@ class MegaHentai :
         return videoList
     }
 
-    private fun extractVideosFromEmbed(embedUrl: String, playerName: String): List<Video> {
-        return when {
-            "blogger.com" in embedUrl || "blogspot.com" in embedUrl -> {
-                bloggerExtractor.videosFromUrl(embedUrl, headers)
-            }
-            else -> {
-                universalExtractor.videosFromUrl(embedUrl, headers, playerName)
-            }
+    private fun extractVideosFromEmbed(embedUrl: String, playerName: String): List<Video> = when {
+        "blogger.com" in embedUrl || "blogspot.com" in embedUrl -> {
+            bloggerExtractor.videosFromUrl(embedUrl, headers)
+        }
+        else -> {
+            universalExtractor.videosFromUrl(embedUrl, headers, playerName)
         }
     }
 }
