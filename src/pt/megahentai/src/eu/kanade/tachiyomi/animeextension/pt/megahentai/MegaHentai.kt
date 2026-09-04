@@ -112,16 +112,19 @@ class MegaHentai : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()
+
     override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
+
     override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
 
     // =============================== Search ===============================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return GET("$baseUrl/page/$page/?s=$query", headers)
-    }
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request =
+        GET("$baseUrl/page/$page/?s=$query", headers)
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
+
     override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
+
     override fun searchAnimeNextPageSelector(): String = popularAnimeNextPageSelector()
 
     // =========================== Anime Details ============================
@@ -133,12 +136,12 @@ class MegaHentai : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/hentai/page/$page/", headers)
-    }
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/hentai/page/$page/", headers)
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
+
     override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
+
     override fun latestUpdatesNextPageSelector(): String = popularAnimeNextPageSelector()
 
     // =============================== Settings ===============================
