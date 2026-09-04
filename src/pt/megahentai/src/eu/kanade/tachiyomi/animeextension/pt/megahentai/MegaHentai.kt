@@ -30,10 +30,43 @@ class MegaHentai :
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/hentai/", headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage = latestUpdatesParse(response)
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val document = response.asJsoup()
+        // Filtra itens da seção "Mais vistos da Semana" (caso exista)
+        val items = document.select("article.item.tvshows").filterNot { element ->
+            element.parents().any { it.id() == "genre_assistir-hentai" }
+        }
+        val animes = items.map { element -> parseAnimeFromCard(element) }
+        val hasNextPage = document.select("link[rel=next]").firstOrNull() != null
+        return AnimesPage(animes, hasNextPage)
+    }
 
     // =============================== Latest ===============================
-    override fun latestUpdatesNextPageSelector() = "link[rel=next]"
+    override fun latestUpdatesRequest(page: Int): Request {
+        val url = if (page == 1) "$baseUrl/episodio/" else "$baseUrl/episodio/page/$page/"
+        return GET(url, headers)
+    }
+
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        val document = response.asJsoup()
+        // Filtra itens da seção "Mais vistos da Semana"
+        val items = document.select("article.item.tvshows").filterNot { element ->
+            element.parents().any { it.id() == "genre_assistir-hentai" }
+        }
+        val animes = items.map { element -> parseAnimeFromCard(element) }
+        val hasNextPage = document.select("link[rel=next]").firstOrNull() != null
+        return AnimesPage(animes, hasNextPage)
+    }
+
+    private fun parseAnimeFromCard(element: Element): SAnime {
+        val anime = SAnime.create()
+        anime.title = element.select(".data h3 a").text().trim()
+        val url = element.select(".poster a").attr("href")
+        anime.setUrlWithoutDomain(url)
+        val img = element.select(".poster img").first()
+        anime.thumbnail_url = img?.attr("data-src") ?: img?.attr("src") ?: ""
+        return anime
+    }
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
@@ -43,6 +76,14 @@ class MegaHentai :
             "$baseUrl/?s=${query.replace(" ", "+")}&paged=$page"
         }
         return GET(url, headers)
+    }
+
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val document = response.asJsoup()
+        val items = document.select("article.item.tvshows")
+        val animes = items.map { element -> parseAnimeFromCard(element) }
+        val hasNextPage = document.select("link[rel=next]").firstOrNull() != null
+        return AnimesPage(animes, hasNextPage)
     }
 
     // =========================== Anime Details ============================
@@ -203,31 +244,35 @@ class MegaHentai :
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
 
-        // Seleciona apenas o player ativo (classe "on"), se existir
-        val activePlayer = document.select("ul#playeroptionsul li.on").firstOrNull()
-            ?: document.select("ul#playeroptionsul li").firstOrNull()
+        // 1. Prioriza o iframe ativo diretamente (evita chamada à API)
+        val activeIframe = document.select("div.source-box.on iframe").firstOrNull()
+            ?: document.select("div.source-box iframe").firstOrNull()
 
-        if (activePlayer != null) {
-            return runBlocking { getPlayerVideos(activePlayer) }
+        if (activeIframe != null) {
+            val iframeSrc = activeIframe.attr("src")
+            if (iframeSrc.isNotEmpty()) {
+                val iframeHeaders = headersBuilder()
+                    .add("Referer", response.request.url.toString())
+                    .build()
+                return runBlocking { universalExtractor.videosFromUrl(iframeSrc, iframeHeaders, name) }
+            }
         }
 
-        // Fallback: tenta extrair iframe diretamente
-        val iframe = document.selectFirst("iframe[src]")
-        if (iframe != null) {
-            val iframeSrc = iframe.attr("src")
-            val iframeHeaders = headersBuilder()
-                .add("Referer", response.request.url.toString())
-                .build()
-            return runBlocking { universalExtractor.videosFromUrl(iframeSrc, iframeHeaders, name) }
+        // 2. Fallback: tenta usar a API do player para obter a URL
+        val players = document.select("ul#playeroptionsul li")
+        if (players.isNotEmpty()) {
+            val activePlayer = document.select("ul#playeroptionsul li.on").firstOrNull()
+                ?: players.first()
+            return runBlocking { getPlayerVideos(activePlayer, response.request.url.toString()) }
         }
 
         return emptyList()
     }
 
-    private suspend fun getPlayerVideos(player: Element): List<Video> {
+    private suspend fun getPlayerVideos(player: Element, episodeUrl: String): List<Video> {
         val name = player.selectFirst("span")?.text()?.trim() ?: "Player"
 
-        val url = getPlayerUrl(player)
+        val url = getPlayerUrl(player, episodeUrl)
 
         val videos = when {
             "blogger.com" in url -> bloggerExtractor.videosFromUrl(url, headers)
@@ -256,11 +301,14 @@ class MegaHentai :
         return videos
     }
 
-    private suspend fun getPlayerUrl(player: Element): String {
+    private suspend fun getPlayerUrl(player: Element, episodeUrl: String): String {
         val type = player.attr("data-type")
         val id = player.attr("data-post")
         val num = player.attr("data-nume")
-        return client.newCall(GET("$baseUrl/wp-json/dooplayer/v2/$id/$type/$num"))
+        val requestHeaders = headersBuilder()
+            .add("Referer", episodeUrl)
+            .build()
+        return client.newCall(GET("$baseUrl/wp-json/dooplayer/v2/$id/$type/$num", requestHeaders))
             .awaitSuccess()
             .bodyString()
             .substringAfter("\"embed_url\":\"")
