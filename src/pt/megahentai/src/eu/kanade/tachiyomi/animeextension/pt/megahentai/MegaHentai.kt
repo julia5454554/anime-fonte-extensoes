@@ -37,7 +37,7 @@ class MegaHentai :
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val titleElement = element.selectFirst("div.data h3 a, div.title a")
         title = titleElement?.text() ?: ""
-        setUrlWithoutBaseUrl(titleElement?.attr("abs:href") ?: element.selectFirst("a")?.attr("abs:href") ?: "")
+        url = titleElement?.attr("abs:href") ?: element.selectFirst("a")?.attr("abs:href") ?: ""
         thumbnail_url = element.selectFirst("div.poster img, img")?.attr("abs:src")
     }
 
@@ -49,7 +49,7 @@ class MegaHentai :
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = element.selectFirst("a")
         name = element.selectFirst("div.episodiotitle a, a")?.text() ?: "Episódio"
-        setUrlWithoutBaseUrl(link?.attr("abs:href") ?: "")
+        url = link?.attr("abs:href") ?: ""
         episode_number = element.selectFirst("div.numerando")?.text()?.filter { it.isDigit() }?.toFloatOrNull() ?: 1f
     }
 
