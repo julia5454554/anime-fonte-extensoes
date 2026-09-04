@@ -32,11 +32,10 @@ class MegaHentai :
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        // Filtra itens da seção "Mais vistos da Semana" (caso exista)
         val items = document.select("article.item.tvshows").filterNot { element ->
             element.parents().any { it.id() == "genre_assistir-hentai" }
         }
-        val animes = items.map { element -> parseAnimeFromCard(element) }
+        val animes = items.map { parseAnimeFromCard(it) }
         val hasNextPage = document.select("link[rel=next]").firstOrNull() != null
         return AnimesPage(animes, hasNextPage)
     }
@@ -49,11 +48,10 @@ class MegaHentai :
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        // Filtra itens da seção "Mais vistos da Semana"
         val items = document.select("article.item.tvshows").filterNot { element ->
             element.parents().any { it.id() == "genre_assistir-hentai" }
         }
-        val animes = items.map { element -> parseAnimeFromCard(element) }
+        val animes = items.map { parseAnimeFromCard(it) }
         val hasNextPage = document.select("link[rel=next]").firstOrNull() != null
         return AnimesPage(animes, hasNextPage)
     }
@@ -81,7 +79,7 @@ class MegaHentai :
     override fun searchAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val items = document.select("article.item.tvshows")
-        val animes = items.map { element -> parseAnimeFromCard(element) }
+        val animes = items.map { parseAnimeFromCard(it) }
         val hasNextPage = document.select("link[rel=next]").firstOrNull() != null
         return AnimesPage(animes, hasNextPage)
     }
@@ -90,12 +88,12 @@ class MegaHentai :
     override val additionalInfoSelector = "div.wp-content"
 
     override fun Document.getDescription(): String = select("$additionalInfoSelector p")
-        .first { !it.text().contains("Título Alternativo") }
+        .firstOrNull { !it.text().contains("Título Alternativo") }
         ?.let { it.text() + "\n" }
         ?: ""
 
     fun Document.getAlternativeTitle(): String = select("$additionalInfoSelector p")
-        .first { it.text().contains("Título Alternativo") }
+        .firstOrNull { it.text().contains("Título Alternativo") }
         ?.let { it.text() + "\n" }
         ?: ""
 
@@ -200,7 +198,6 @@ class MegaHentai :
     }
 
     private fun parseOrphanEpisodes(initial: Document): List<SEpisode> {
-        // Implementação simplificada para páginas de episódio individuais
         val episodes = mutableListOf<SEpisode>()
         var document = initial
         var url = initial.location()
@@ -244,7 +241,7 @@ class MegaHentai :
     override fun videoListParse(response: Response): List<Video> {
         val document = response.useAsJsoup()
 
-        // 1. Prioriza o iframe ativo diretamente (evita chamada à API)
+        // 1. Prioriza o iframe ativo diretamente
         val activeIframe = document.select("div.source-box.on iframe").firstOrNull()
             ?: document.select("div.source-box iframe").firstOrNull()
 
@@ -258,12 +255,14 @@ class MegaHentai :
             }
         }
 
-        // 2. Fallback: tenta usar a API do player para obter a URL
+        // 2. Fallback: tenta usar a API do player
         val players = document.select("ul#playeroptionsul li")
         if (players.isNotEmpty()) {
             val activePlayer = document.select("ul#playeroptionsul li.on").firstOrNull()
-                ?: players.first()
-            return runBlocking { getPlayerVideos(activePlayer, response.request.url.toString()) }
+                ?: players.firstOrNull()
+            if (activePlayer != null) {
+                return runBlocking { getPlayerVideos(activePlayer, response.request.url.toString()) }
+            }
         }
 
         return emptyList()
@@ -287,18 +286,17 @@ class MegaHentai :
                     .add("Referer", "https://${url.toHttpUrl().host}/")
                     .build()
 
-                return listOf(
-                    Video(videoUrl, name, videoUrl, videoHeaders),
-                )
+                return listOf(Video(videoUrl, name, videoUrl, videoHeaders))
             }
 
             else -> emptyList()
         }
 
-        if (videos.isEmpty()) {
-            return universalExtractor.videosFromUrl(url, headers, name)
+        return if (videos.isEmpty()) {
+            universalExtractor.videosFromUrl(url, headers, name)
+        } else {
+            videos
         }
-        return videos
     }
 
     private suspend fun getPlayerUrl(player: Element, episodeUrl: String): String {
