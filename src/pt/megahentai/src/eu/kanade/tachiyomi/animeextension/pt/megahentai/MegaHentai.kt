@@ -32,15 +32,17 @@ class MegaHentai :
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val items = document.select("article.item.tvshows").filterNot { element ->
+        val items = document.select("article.item, div.item").filterNot { element ->
             element.parents().any { it.id() == "genre_assistir-hentai" }
         }
         val animes = items.map { parseAnimeFromCard(it) }
-        val hasNextPage = document.select("link[rel=next]").firstOrNull() != null
+        val hasNextPage = document.select("link[rel=next]").isNotEmpty()
         return AnimesPage(animes, hasNextPage)
     }
 
     // =============================== Latest ===============================
+    override fun latestUpdatesNextPageSelector() = "link[rel=next]"
+
     override fun latestUpdatesRequest(page: Int): Request {
         val url = if (page == 1) "$baseUrl/episodio/" else "$baseUrl/episodio/page/$page/"
         return GET(url, headers)
@@ -48,11 +50,11 @@ class MegaHentai :
 
     override fun latestUpdatesParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val items = document.select("article.item.tvshows").filterNot { element ->
+        val items = document.select("article.item, div.item").filterNot { element ->
             element.parents().any { it.id() == "genre_assistir-hentai" }
         }
         val animes = items.map { parseAnimeFromCard(it) }
-        val hasNextPage = document.select("link[rel=next]").firstOrNull() != null
+        val hasNextPage = document.select(latestUpdatesNextPageSelector()).isNotEmpty()
         return AnimesPage(animes, hasNextPage)
     }
 
@@ -78,9 +80,9 @@ class MegaHentai :
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val items = document.select("article.item.tvshows")
+        val items = document.select("article.item, div.item")
         val animes = items.map { parseAnimeFromCard(it) }
-        val hasNextPage = document.select("link[rel=next]").firstOrNull() != null
+        val hasNextPage = document.select("link[rel=next], div.pagination a.arrow_pag").isNotEmpty()
         return AnimesPage(animes, hasNextPage)
     }
 
