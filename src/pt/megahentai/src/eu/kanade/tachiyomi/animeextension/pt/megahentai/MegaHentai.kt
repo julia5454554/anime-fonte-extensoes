@@ -16,9 +16,7 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class MegaHentai :
-    ParsedAnimeHttpSource(),
-    ConfigurableAnimeSource {
+class MegaHentai : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override val name = "Mega Hentai"
 
