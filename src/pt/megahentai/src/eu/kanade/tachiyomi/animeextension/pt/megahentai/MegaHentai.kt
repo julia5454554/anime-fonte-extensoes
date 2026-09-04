@@ -24,7 +24,7 @@ class MegaHentai :
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
     private val universalExtractor by lazy { UniversalExtractor(client) }
 
-    private val episodeNumberRegex = "(?:Epis[oó]dio\\s+)([0-9]+(?:\\.[0-9]+)?)".toRegex(RegexOption.IGNORE_CASE)
+    override val episodeNumberRegex = "(?:Epis[oó]dio\\s+)([0-9]+(?:\\.[0-9]+)?)".toRegex(RegexOption.IGNORE_CASE)
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int) = GET("$baseUrl/hentai/page/$page/", headers)
