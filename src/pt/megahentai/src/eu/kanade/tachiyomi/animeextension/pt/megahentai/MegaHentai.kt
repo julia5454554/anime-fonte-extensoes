@@ -16,7 +16,9 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class MegaHentai : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
+class MegaHentai :
+    ParsedAnimeHttpSource(),
+    ConfigurableAnimeSource {
 
     override val name = "Mega Hentai"
 
@@ -118,8 +120,7 @@ class MegaHentai : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
 
     // =============================== Search ===============================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request =
-        GET("$baseUrl/page/$page/?s=$query", headers)
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = GET("$baseUrl/page/$page/?s=$query", headers)
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
 
