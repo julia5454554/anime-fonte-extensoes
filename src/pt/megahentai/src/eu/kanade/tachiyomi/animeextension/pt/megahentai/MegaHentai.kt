@@ -1,140 +1,72 @@
 package eu.kanade.tachiyomi.animeextension.pt.megahentai
 
-import aniyomi.lib.bloggerextractor.BloggerExtractor
-import eu.kanade.tachiyomi.animeextension.pt.megahentai.extractors.UniversalExtractor
-import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import android.app.Application
+import androidx.preference.ListPreference
+import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
-import eu.kanade.tachiyomi.multisrc.dooplay.DooPlay
+import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
+import eu.kanade.tachiyomi.lib.bloggerextractor.BloggerExtractor
+import eu.kanade.tachiyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import eu.kanade.tachiyomi.network.POST
+import kotlinx.coroutines.runBlocking
+import okhttp3.FormBody
+import okhttp3.Headers
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.lang.Exception
 
-class MegaHentai :
-    DooPlay(
-        "pt-BR",
-        "Mega Hentai",
-        "https://megahentai.biz",
-    ) {
+class MegaHentai : ConfigurableAnimeSource, ParsedAnimeHttpSource() {
+
+    override val name = "Mega Hentai"
+
+    override val baseUrl = "https://megahentai.com"
+
+    override val lang = "pt-BR"
+
+    override val supportsLatest = true
+
+    override val client: OkHttpClient = network.client
 
     private val bloggerExtractor by lazy { BloggerExtractor(client) }
-    private val universalExtractor by lazy { UniversalExtractor(client) }
-
-    override val episodeNumberRegex = "(?:Epis[oó]dio\\s+)([0-9]+(?:\\.[0-9]+)?)".toRegex(RegexOption.IGNORE_CASE)
 
     // ============================== Popular ===============================
-    override fun popularAnimeRequest(page: Int) = GET("$baseUrl/hentai/page/$page/", headers)
-
-    override fun popularAnimeParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
-        val items = document.select("article.item, div.item")
-        val animes = items.map { parseAnimeFromCard(it) }
-
-        val hasNextPage = document.select(".pagination span.current + a, .pagination a:contains(arrow_pag)").isNotEmpty()
-        return AnimesPage(animes, hasNextPage)
+    override fun popularAnimeRequest(page: Int): Request {
+        return GET("$baseUrl/hentai/page/$page/", headers)
     }
 
-    // =============================== Latest ===============================
-    override fun latestUpdatesNextPageSelector() = "div.pagination span.current + a.inactive"
+    override fun popularAnimeSelector(): String = "div.result-item article, div.items article"
 
-    override fun latestUpdatesRequest(page: Int): Request {
-        val url = if (page == 1) {
-            "$baseUrl/assistir-hentai-online/"
-        } else {
-            "$baseUrl/assistir-hentai-online/page/$page/"
-        }
-        return GET(url, headers)
-    }
-
-    override fun latestUpdatesParse(response: Response): AnimesPage {
-        val document = response.asJsoup()
-        val items = document.select("div.epi article, article.item, div.item")
-
-        val animes = items.map { parseAnimeFromCard(it, isEpisodeCard = true) }
-        val hasNextPage = document.select(latestUpdatesNextPageSelector()).isNotEmpty()
-        return AnimesPage(animes, hasNextPage)
-    }
-
-    private fun parseAnimeFromCard(element: Element, isEpisodeCard: Boolean = false): SAnime {
-        val anime = SAnime.create()
-
-        val titleSelector = if (isEpisodeCard) ".data h3 a, h2 a" else ".data h3 a"
-        anime.title = element.select(titleSelector).text().trim()
-
-        val url = element.select(".poster a, a.w-full").attr("href")
-        anime.setUrlWithoutDomain(url)
-
-        val img = element.select(".poster img, img.w-full").first()
-        anime.thumbnail_url = img?.attr("data-src") ?: img?.attr("src") ?: ""
-        return anime
-    }
-
-    // =========================== Anime Details ============================
-    override val additionalInfoSelector = "div.wp-content"
-
-    override fun animeDetailsParse(document: Document): SAnime {
-        val doc = getRealAnimeDoc(document)
-
-        val sheader = doc.selectFirst("div.sheader")
-
-        if (sheader == null) {
-            return SAnime.create().apply {
-                setUrlWithoutDomain(doc.location())
-                title = doc.selectFirst("h1")?.text()?.trim()
-                    ?.ifEmpty { doc.selectFirst("meta[property='og:title']")?.attr("content")?.trim().orEmpty() }
-                    ?: ""
-                thumbnail_url = doc.selectFirst("meta[property='og:image']")?.attr("content")?.trim()
-                description = doc.selectFirst("div.wp-content, meta[name='description']")?.text()?.trim()
-                status = SAnime.UNKNOWN
-            }
-        }
-
+    override fun popularAnimeFromElement(element: Element): SAnime {
         return SAnime.create().apply {
-            setUrlWithoutDomain(doc.location())
-
-            val posterImg = sheader.selectFirst("div.poster > img")
-            title = posterImg?.attr("alt")?.trim() ?: sheader.selectFirst("div.data > h1")?.text()?.trim() ?: ""
-            thumbnail_url = posterImg?.attr("abs:src") ?: posterImg?.attr("src")
-
-            genre = sheader.select("div.data div.sgeneros > a")
-                .eachText()
-                .joinToString()
-
-            val synopsis = doc.selectFirst("div#info div.wp-content p")?.text()?.trim()
-            val altTitle = sheader.selectFirst("div.data > span.extra-title")?.text()?.trim()
-
-            description = buildString {
-                if (!altTitle.isNullOrBlank()) append("Título Alternativo: $altTitle\n\n")
-                if (!synopsis.isNullOrBlank()) append(synopsis)
-            }
-
-            status = SAnime.UNKNOWN
+            val titleElement = element.selectFirst("div.data h3 a, div.title a")
+            title = titleElement?.text() ?: ""
+            setUrlWithoutBaseUrl(titleElement?.attr("abs:href") ?: element.selectFirst("a")?.attr("abs:href") ?: "")
+            thumbnail_url = element.selectFirst("div.poster img, img")?.attr("abs:src")
         }
     }
 
-    // ============================ Episodes List ============================
-    override fun episodeListSelector() = "ul.episodios li"
+    override fun popularAnimeNextPageSelector(): String = "div.pagination a.next, a.arrow_pag"
+
+    // =============================== Episodes ===============================
+    override fun episodeListSelector(): String = "ul.episodios li, div.episodios ul li"
 
     override fun episodeFromElement(element: Element): SEpisode {
-        val episode = SEpisode.create()
-        val link = element.selectFirst(".episodiotitle a")
-        val url = link?.attr("href") ?: ""
-        episode.setUrlWithoutDomain(url)
-
-        val name = link?.text()?.trim() ?: ""
-        episode.name = name
-
-        val number = element.selectFirst(".numerando")?.text()?.trim()
-            ?.substringBefore("-")?.trim()?.toFloatOrNull()
-            ?: episodeNumberRegex.find(name)?.groupValues?.get(1)?.toFloatOrNull()
-            ?: 0f
-
-        episode.episode_number = number
-        return episode
+        return SEpisode.create().apply {
+            val link = element.selectFirst("a")
+            name = element.selectFirst("div.episodiotitle a, a")?.text() ?: "Episódio"
+            setUrlWithoutBaseUrl(link?.attr("abs:href") ?: "")
+            episode_number = element.selectFirst("div.numerando")?.text()?.filter { it.isDigit() }?.toFloatOrNull() ?: 1f
+        }
     }
 
     // ============================ Video Links =============================
@@ -167,7 +99,9 @@ class MegaHentai :
                         .replace("\\/", "/")
 
                     if (embedUrl.isNotBlank() && embedUrl.startsWith("http")) {
-                        videoList.addAll(extractVideosFromEmbed(embedUrl, playerListName))
+                        // Uso do runBlocking para resolver o erro da suspend function no Kotlin
+                        val videos = runBlocking { extractVideosFromEmbed(embedUrl, playerListName) }
+                        videoList.addAll(videos)
                     }
                 }
             }
@@ -177,7 +111,8 @@ class MegaHentai :
             document.select("div.source-box iframe, div.embed-holder iframe").firstOrNull()?.let { iframe ->
                 val src = iframe.attr("abs:src").ifEmpty { iframe.attr("src") }
                 if (src.isNotBlank() && src.startsWith("http")) {
-                    videoList.addAll(extractVideosFromEmbed(src, "Iframe Fallback"))
+                    val videos = runBlocking { extractVideosFromEmbed(src, "Iframe Fallback") }
+                    videoList.addAll(videos)
                 }
             }
         }
@@ -185,12 +120,47 @@ class MegaHentai :
         return videoList
     }
 
-    private fun extractVideosFromEmbed(embedUrl: String, playerName: String): List<Video> = when {
-        "blogger.com" in embedUrl || "blogspot.com" in embedUrl -> {
-            bloggerExtractor.videosFromUrl(embedUrl, headers)
-        }
-        else -> {
-            universalExtractor.videosFromUrl(embedUrl, headers, playerName)
+    private suspend fun extractVideosFromEmbed(embedUrl: String, playerName: String): List<Video> {
+        return when {
+            "blogger.com" in embedUrl || "blogspot.com" in embedUrl -> {
+                bloggerExtractor.videosFromUrl(embedUrl, headers)
+            }
+            else -> emptyList()
         }
     }
+
+    override fun videoListSelector(): String = throw UnsupportedOperationException()
+    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
+    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
+
+    // =============================== Search ===============================
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        return GET("$baseUrl/page/$page/?s=$query", headers)
+    }
+
+    override fun searchAnimeSelector(): String = popularAnimeSelector()
+    override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
+    override fun searchAnimeNextPageSelector(): String = popularAnimeNextPageSelector()
+
+    // =========================== Anime Details ============================
+    override fun animeDetailsParse(document: Document): SAnime {
+        return SAnime.create().apply {
+            title = document.selectFirst("h1, div.data h1")?.text() ?: ""
+            genre = document.select("div.sgeneros a, div.genre a").joinToString { it.text() }
+            description = document.selectFirst("div.wp-content p, div.entry-content p")?.text()
+            thumbnail_url = document.selectFirst("div.poster img, img")?.attr("abs:src")
+        }
+    }
+
+    // =============================== Latest ===============================
+    override fun latestUpdatesRequest(page: Int): Request {
+        return GET("$baseUrl/hentai/page/$page/", headers)
+    }
+
+    override fun latestUpdatesSelector(): String = popularAnimeSelector()
+    override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
+    override fun latestUpdatesNextPageSelector(): String = popularAnimeNextPageSelector()
+
+    // =============================== Settings ===============================
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {}
 }
