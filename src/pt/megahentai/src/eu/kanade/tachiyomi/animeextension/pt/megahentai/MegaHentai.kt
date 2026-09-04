@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.pt.megahentai
 
 import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animeextension.pt.megahentai.extractors.BloggerExtractor
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -29,17 +30,21 @@ class MegaHentai :
 
     override val client: OkHttpClient = network.client
 
+    private val bloggerExtractor by lazy { BloggerExtractor(client) }
+
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/hentai/page/$page/", headers)
 
-    override fun popularAnimeSelector(): String = "div.result-item article, div.items article"
+    override fun popularAnimeSelector(): String = "div.result-item article, div.items article, article.item"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val titleElement = element.selectFirst("div.data h3 a, div.title a")
+        val titleElement = element.selectFirst("div.data h3 a, div.title a, h3 a")
         title = titleElement?.text() ?: ""
         val link = titleElement?.attr("href") ?: element.selectFirst("a")?.attr("href") ?: ""
         url = getUrl(link)
-        thumbnail_url = element.selectFirst("div.poster img, img")?.attr("abs:src")
+        thumbnail_url = element.selectFirst("div.poster img, img")?.let { img ->
+            img.attr("abs:data-src").ifEmpty { img.attr("abs:src") }
+        }
     }
 
     override fun popularAnimeNextPageSelector(): String = "div.pagination a.next, a.arrow_pag"
@@ -68,33 +73,33 @@ class MegaHentai :
             val nume = player.attr("data-nume")
             val type = player.attr("data-type")
 
-            if (post.isEmpty() || nume.isEmpty() || type.isEmpty()) continue
+            if (post.isNotEmpty() && nume.isNotEmpty() && type.isNotEmpty()) {
+                val apiUrl = "$baseUrl/wp-json/dooplayer/v2/$post/$type/$nume"
+                val apiHeaders = headers.newBuilder().add("Referer", document.location().toString()).build()
 
-            val apiUrl = "$baseUrl/wp-json/dooplayer/v2/$post/$type/$nume"
-            val apiRequest = GET(apiUrl, headers.newBuilder().add("Referer", document.location().toString()).build())
+                runCatching {
+                    client.newCall(GET(apiUrl, apiHeaders)).execute().use { apiResponse ->
+                        if (apiResponse.isSuccessful) {
+                            val responseBody = apiResponse.body.string()
+                            val embedUrl = responseBody
+                                .substringAfter("\"embed_url\":\"", "")
+                                .substringBefore("\"", "")
+                                .replace("\\/", "/")
 
-            runCatching {
-                client.newCall(apiRequest).execute().use { apiResponse ->
-                    if (!apiResponse.isSuccessful) return@runCatching
-
-                    val responseBody = apiResponse.body.string()
-                    val embedUrl = responseBody
-                        .substringAfter("\"embed_url\":\"", "")
-                        .substringBefore("\"", "")
-                        .replace("\\/", "/")
-
-                    if (embedUrl.isNotBlank() && embedUrl.startsWith("http")) {
-                        extractVideosFromEmbed(embedUrl, playerListName).let { videoList.addAll(it) }
+                            if (embedUrl.isNotBlank() && embedUrl.startsWith("http")) {
+                                extractVideosFromEmbed(embedUrl, playerListName).let { videoList.addAll(it) }
+                            }
+                        }
                     }
                 }
             }
         }
 
         if (videoList.isEmpty()) {
-            document.select("div.source-box iframe, div.embed-holder iframe").firstOrNull()?.let { iframe ->
+            document.select("div.source-box iframe, div.embed-holder iframe, iframe").forEach { iframe ->
                 val src = iframe.attr("abs:src").ifEmpty { iframe.attr("src") }
                 if (src.isNotBlank() && src.startsWith("http")) {
-                    extractVideosFromEmbed(src, "Iframe Fallback").let { videoList.addAll(it) }
+                    extractVideosFromEmbed(src, "Player Principal").let { videoList.addAll(it) }
                 }
             }
         }
@@ -103,9 +108,9 @@ class MegaHentai :
     }
 
     private fun extractVideosFromEmbed(embedUrl: String, playerName: String): List<Video> = if ("blogger.com" in embedUrl || "blogspot.com" in embedUrl) {
-        listOf(Video(embedUrl, playerName, embedUrl))
+        bloggerExtractor.videosFromUrl(embedUrl, playerName)
     } else {
-        emptyList()
+        listOf(Video(embedUrl, playerName, embedUrl))
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()
@@ -127,8 +132,10 @@ class MegaHentai :
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         title = document.selectFirst("h1, div.data h1")?.text() ?: ""
         genre = document.select("div.sgeneros a, div.genre a").joinToString { it.text() }
-        description = document.selectFirst("div.wp-content p, div.entry-content p")?.text()
-        thumbnail_url = document.selectFirst("div.poster img, img")?.attr("abs:src")
+        description = document.selectFirst("div.wp-content p, div.entry-content p, div.description p")?.text()
+        thumbnail_url = document.selectFirst("div.poster img, div.sinfo img")?.let { img ->
+            img.attr("abs:data-src").ifEmpty { img.attr("abs:src") }
+        }
     }
 
     // =============================== Latest ===============================
