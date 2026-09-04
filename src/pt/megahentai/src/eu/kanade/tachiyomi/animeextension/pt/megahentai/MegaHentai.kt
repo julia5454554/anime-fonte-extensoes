@@ -37,13 +37,11 @@ class MegaHentai :
 
     override fun popularAnimeSelector(): String = "div.result-item article, div.items article"
 
-    override fun popularAnimeFromElement(element: Element): SAnime {
-        return SAnime.create().apply {
-            val titleElement = element.selectFirst("div.data h3 a, div.title a")
-            title = titleElement?.text() ?: ""
-            setUrlWithoutBaseUrl(titleElement?.attr("abs:href") ?: element.selectFirst("a")?.attr("abs:href") ?: "")
-            thumbnail_url = element.selectFirst("div.poster img, img")?.attr("abs:src")
-        }
+    override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
+        val titleElement = element.selectFirst("div.data h3 a, div.title a")
+        title = titleElement?.text() ?: ""
+        setUrlWithoutBaseUrl(titleElement?.attr("abs:href") ?: element.selectFirst("a")?.attr("abs:href") ?: "")
+        thumbnail_url = element.selectFirst("div.poster img, img")?.attr("abs:src")
     }
 
     override fun popularAnimeNextPageSelector(): String = "div.pagination a.next, a.arrow_pag"
@@ -51,13 +49,11 @@ class MegaHentai :
     // =============================== Episodes ===============================
     override fun episodeListSelector(): String = "ul.episodios li, div.episodios ul li"
 
-    override fun episodeFromElement(element: Element): SEpisode {
-        return SEpisode.create().apply {
-            val link = element.selectFirst("a")
-            name = element.selectFirst("div.episodiotitle a, a")?.text() ?: "Episódio"
-            setUrlWithoutBaseUrl(link?.attr("abs:href") ?: "")
-            episode_number = element.selectFirst("div.numerando")?.text()?.filter { it.isDigit() }?.toFloatOrNull() ?: 1f
-        }
+    override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
+        val link = element.selectFirst("a")
+        name = element.selectFirst("div.episodiotitle a, a")?.text() ?: "Episódio"
+        setUrlWithoutBaseUrl(link?.attr("abs:href") ?: "")
+        episode_number = element.selectFirst("div.numerando")?.text()?.filter { it.isDigit() }?.toFloatOrNull() ?: 1f
     }
 
     // ============================ Video Links =============================
@@ -110,13 +106,11 @@ class MegaHentai :
         return videoList
     }
 
-    private suspend fun extractVideosFromEmbed(embedUrl: String, playerName: String): List<Video> {
-        return when {
-            "blogger.com" in embedUrl || "blogspot.com" in embedUrl -> {
-                bloggerExtractor.videosFromUrl(embedUrl, headers)
-            }
-            else -> emptyList()
+    private suspend fun extractVideosFromEmbed(embedUrl: String, playerName: String): List<Video> = when {
+        "blogger.com" in embedUrl || "blogspot.com" in embedUrl -> {
+            bloggerExtractor.videosFromUrl(embedUrl, headers)
         }
+        else -> emptyList()
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()
@@ -133,13 +127,11 @@ class MegaHentai :
     override fun searchAnimeNextPageSelector(): String = popularAnimeNextPageSelector()
 
     // =========================== Anime Details ============================
-    override fun animeDetailsParse(document: Document): SAnime {
-        return SAnime.create().apply {
-            title = document.selectFirst("h1, div.data h1")?.text() ?: ""
-            genre = document.select("div.sgeneros a, div.genre a").joinToString { it.text() }
-            description = document.selectFirst("div.wp-content p, div.entry-content p")?.text()
-            thumbnail_url = document.selectFirst("div.poster img, img")?.attr("abs:src")
-        }
+    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
+        title = document.selectFirst("h1, div.data h1")?.text() ?: ""
+        genre = document.select("div.sgeneros a, div.genre a").joinToString { it.text() }
+        description = document.selectFirst("div.wp-content p, div.entry-content p")?.text()
+        thumbnail_url = document.selectFirst("div.poster img, img")?.attr("abs:src")
     }
 
     // =============================== Latest ===============================
