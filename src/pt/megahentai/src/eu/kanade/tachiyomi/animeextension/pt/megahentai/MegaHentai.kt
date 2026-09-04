@@ -7,12 +7,11 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
-import eu.kanade.tachiyomi.lib.bloggerextractor.BloggerExtractor
 import eu.kanade.tachiyomi.network.GET
-import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
@@ -29,8 +28,6 @@ class MegaHentai :
     override val supportsLatest = true
 
     override val client: OkHttpClient = network.client
-
-    private val bloggerExtractor by lazy { BloggerExtractor(client) }
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/hentai/page/$page/", headers)
@@ -73,7 +70,7 @@ class MegaHentai :
             if (post.isEmpty() || nume.isEmpty() || type.isEmpty()) continue
 
             val apiUrl = "$baseUrl/wp-json/dooplayer/v2/$post/$type/$nume"
-            val apiRequest = GET(apiUrl, headers.newBuilder().add("Referer", document.location()).build())
+            val apiRequest = GET(apiUrl, headers.newBuilder().add("Referer", document.location().toString()).build())
 
             runCatching {
                 client.newCall(apiRequest).execute().use { apiResponse ->
@@ -86,8 +83,7 @@ class MegaHentai :
                         .replace("\\/", "/")
 
                     if (embedUrl.isNotBlank() && embedUrl.startsWith("http")) {
-                        val videos = runBlocking { extractVideosFromEmbed(embedUrl, playerListName) }
-                        videoList.addAll(videos)
+                        extractVideosFromEmbed(embedUrl, playerListName).let { videoList.addAll(it) }
                     }
                 }
             }
@@ -97,8 +93,7 @@ class MegaHentai :
             document.select("div.source-box iframe, div.embed-holder iframe").firstOrNull()?.let { iframe ->
                 val src = iframe.attr("abs:src").ifEmpty { iframe.attr("src") }
                 if (src.isNotBlank() && src.startsWith("http")) {
-                    val videos = runBlocking { extractVideosFromEmbed(src, "Iframe Fallback") }
-                    videoList.addAll(videos)
+                    extractVideosFromEmbed(src, "Iframe Fallback").let { videoList.addAll(it) }
                 }
             }
         }
@@ -106,11 +101,12 @@ class MegaHentai :
         return videoList
     }
 
-    private suspend fun extractVideosFromEmbed(embedUrl: String, playerName: String): List<Video> = when {
-        "blogger.com" in embedUrl || "blogspot.com" in embedUrl -> {
-            bloggerExtractor.videosFromUrl(embedUrl, headers)
+    private fun extractVideosFromEmbed(embedUrl: String, playerName: String): List<Video> {
+        return if ("blogger.com" in embedUrl || "blogspot.com" in embedUrl) {
+            listOf(Video(embedUrl, playerName, embedUrl))
+        } else {
+            emptyList()
         }
-        else -> emptyList()
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()
@@ -147,4 +143,6 @@ class MegaHentai :
 
     // =============================== Settings ===============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
+
+    private fun Response.asJsoup(): Document = Jsoup.parse(body.string(), request.url.toString())
 }
