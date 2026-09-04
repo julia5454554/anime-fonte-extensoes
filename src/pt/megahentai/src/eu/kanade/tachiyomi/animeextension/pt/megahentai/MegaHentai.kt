@@ -21,7 +21,7 @@ class MegaHentai :
 
     override val name = "Mega Hentai"
 
-    override val baseUrl = "https://megahentai.com"
+    override val baseUrl = "https://megahentai.biz"
 
     override val lang = "pt-BR"
 
@@ -131,7 +131,7 @@ class MegaHentai :
     }
 
     // =============================== Latest ===============================
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/hentai/page/$page/", headers)
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/episodio/page/$page/", headers)
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
 
