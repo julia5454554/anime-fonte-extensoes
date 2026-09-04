@@ -37,7 +37,8 @@ class MegaHentai :
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val titleElement = element.selectFirst("div.data h3 a, div.title a")
         title = titleElement?.text() ?: ""
-        url = titleElement?.attr("abs:href") ?: element.selectFirst("a")?.attr("abs:href") ?: ""
+        val link = titleElement?.attr("href") ?: element.selectFirst("a")?.attr("href") ?: ""
+        url = getUrl(link)
         thumbnail_url = element.selectFirst("div.poster img, img")?.attr("abs:src")
     }
 
@@ -47,9 +48,9 @@ class MegaHentai :
     override fun episodeListSelector(): String = "ul.episodios li, div.episodios ul li"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
-        val link = element.selectFirst("a")
+        val link = element.selectFirst("a")?.attr("href") ?: ""
         name = element.selectFirst("div.episodiotitle a, a")?.text() ?: "Episódio"
-        url = link?.attr("abs:href") ?: ""
+        url = getUrl(link)
         episode_number = element.selectFirst("div.numerando")?.text()?.filter { it.isDigit() }?.toFloatOrNull() ?: 1f
     }
 
@@ -138,6 +139,13 @@ class MegaHentai :
     override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
     override fun latestUpdatesNextPageSelector(): String = popularAnimeNextPageSelector()
+
+    // =============================== Helpers ===============================
+    private fun getUrl(url: String): String = when {
+        url.isEmpty() -> ""
+        url.startsWith("http") -> url.substringAfter(baseUrl)
+        else -> url
+    }
 
     // =============================== Settings ===============================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {}
