@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: Build Extension Repo
+    name: Build CosXplay Extension
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -26,16 +26,16 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Build APKs
-        run: ./gradlew assembleRelease
+      - name: Build CosXplay APK
+        run: ./gradlew :src:pt:cosxplay:assembleRelease
 
       - name: Create Multimodule Index
         run: ./gradlew createMultimoduleIndex
 
-      - name: Upload APKs to Actions Artifacts
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: extension-apks
+          name: cosxplay-apk
           path: "**/*.apk"
 
       - name: Deploy to GitHub Pages
