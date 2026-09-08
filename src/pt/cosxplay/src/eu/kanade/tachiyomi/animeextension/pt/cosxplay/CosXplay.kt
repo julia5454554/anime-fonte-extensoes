@@ -21,8 +21,8 @@ class CosXplay : ParsedAnimeHttpSource() {
     override val supportsLatest = true
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         .add("Cookie", "age-allow-cosxplay-com=1; abn_country=BR")
-        .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
         .add("Referer", "$baseUrl/")
 
     // ============================== Populares ==============================
@@ -93,17 +93,20 @@ class CosXplay : ParsedAnimeHttpSource() {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
 
-        // Cabeçalhos que o player usará para baixar o vídeo da CDN
-        val videoHeaders = headersBuilder()
-            .set("Referer", response.request.url.toString())
+        // Cabeçalhos injetados diretamente no leitor de vídeo
+        val streamHeaders = Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+            .add("Referer", "$baseUrl/")
+            .add("Accept", "*/*")
+            .add("Cookie", "age-allow-cosxplay-com=1; abn_country=BR")
             .build()
 
-        document.select("video.xp-Player-video source, video source").forEach { element ->
+        document.select("video.xp-Player-video source, video source, source").forEach { element ->
             val src = element.attr("abs:src").ifEmpty { element.attr("src") }
             val qualityLabel = element.attr("title").ifEmpty { "HD" }.uppercase()
 
             if (src.isNotEmpty()) {
-                videoList.add(Video(src, qualityLabel, src, headers = videoHeaders))
+                videoList.add(Video(src, qualityLabel, src, headers = streamHeaders))
             }
         }
 
