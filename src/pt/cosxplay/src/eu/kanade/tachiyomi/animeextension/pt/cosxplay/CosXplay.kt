@@ -132,7 +132,7 @@ class CosXplay : ParsedAnimeHttpSource() {
             "filemoon" in url || "moonplayer" in url -> {
                 runCatching {
                     runBlocking {
-                        videoList.addAll(FilemoonExtractor(client).videosFromUrl(url))
+                        videoList.addAll(FilemoonExtractor(client, headers).videosFromUrl(url))
                     }
                 }
             }
@@ -146,7 +146,7 @@ class CosXplay : ParsedAnimeHttpSource() {
             "voe" in url -> {
                 runCatching {
                     runBlocking {
-                        videoList.addAll(VoeExtractor(client).videosFromUrl(url))
+                        videoList.addAll(VoeExtractor(client, headers).videosFromUrl(url))
                     }
                 }
             }
