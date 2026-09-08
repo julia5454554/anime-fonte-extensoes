@@ -93,12 +93,17 @@ class CosXplay : ParsedAnimeHttpSource() {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
 
+        // Cabeçalhos que o player usará para baixar o vídeo da CDN
+        val videoHeaders = headersBuilder()
+            .set("Referer", response.request.url.toString())
+            .build()
+
         document.select("video.xp-Player-video source, video source").forEach { element ->
             val src = element.attr("abs:src").ifEmpty { element.attr("src") }
             val qualityLabel = element.attr("title").ifEmpty { "HD" }.uppercase()
 
             if (src.isNotEmpty()) {
-                videoList.add(Video(src, qualityLabel, src))
+                videoList.add(Video(src, qualityLabel, src, headers = videoHeaders))
             }
         }
 
