@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import kotlinx.coroutines.runBlocking
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
@@ -132,16 +133,22 @@ class CosXplay : ParsedAnimeHttpSource() {
         try {
             when {
                 "filemoon" in url || "moonplayer" in url -> {
-                    videoList.addAll(FilemoonExtractor(client, headers).videosFromUrl(url))
+                    videoList.addAll(FilemoonExtractor(client).videosFromUrl(url))
                 }
                 "streamwish" in url || "swdyu" in url || "embedwish" in url -> {
-                    videoList.addAll(StreamWishExtractor(client, headers).videosFromUrl(url))
+                    runBlocking {
+                        videoList.addAll(StreamWishExtractor(client, headers).videosFromUrl(url))
+                    }
                 }
                 "voe" in url -> {
-                    VoeExtractor(client).videoFromUrl(url)?.let { videoList.add(it) }
+                    runBlocking {
+                        videoList.addAll(VoeExtractor(client, headers).videosFromUrl(url))
+                    }
                 }
                 "vidhide" in url || "hidev" in url -> {
-                    videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(url))
+                    runBlocking {
+                        videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(url))
+                    }
                 }
                 "dood" in url || "doodstream" in url -> {
                     DoodExtractor(client).videoFromUrl(url)?.let { videoList.add(it) }
