@@ -1,10 +1,9 @@
 ext {
-    set("extName", "CosXplay")
-    set("extClass", ".CosXplay")
-    set("pkgNameSuffix", "pt.cosxplay")
-    set("extVersionCode", 1)
-    set("libVersion", "14")
-    set("isNsfw", true)
+    extName = 'CosXplay'
+    extClass = '.CosXplay'
+    extVersionCode = 1
+    libVersion = '14'
+    isNsfw = true
 }
 
-apply(plugin = "kei.plugins.extension.legacy")
+apply plugin: "kei.plugins.extension.legacy"
