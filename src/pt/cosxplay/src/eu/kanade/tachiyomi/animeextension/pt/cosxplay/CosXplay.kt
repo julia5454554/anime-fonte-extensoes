@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.pt.cosxplay
 
 import aniyomi.lib.doodextractor.DoodExtractor
 import aniyomi.lib.filemoonextractor.FilemoonExtractor
+import aniyomi.lib.playlistutils.PlaylistUtils
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
 import aniyomi.lib.vidhideextractor.VidHideExtractor
 import aniyomi.lib.voeextractor.VoeExtractor
@@ -103,22 +104,37 @@ class CosXplay : ParsedAnimeHttpSource() {
         // 1. Processa IFrames externos via Extractors da pasta 'lib'
         document.select("iframe[src]").forEach { iframe ->
             val iframeUrl = iframe.attr("abs:src")
-            videoList.addAll(extractVideosFromIframe(iframeUrl))
+            if (iframeUrl.startsWith("http")) {
+                videoList.addAll(extractVideosFromIframe(iframeUrl))
+            }
         }
 
-        // 2. Stream principal MPV
-        val streamHeaders = Headers.Builder()
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-            .add("Referer", pageUrl)
-            .add("Accept", "*/*")
+        // 2. Stream principal (Herda TODOS os headers principais + Cookies de idade)
+        val streamHeaders = headers.newBuilder()
+            .set("Referer", pageUrl)
+            .set("Accept", "*/*")
             .build()
+
+        val playlistUtils = PlaylistUtils(client, headers)
 
         document.select("video.xp-Player-video source, video source, source").forEach { element ->
             val src = element.attr("abs:src").ifEmpty { element.attr("src") }
             val qualityLabel = element.attr("title").ifEmpty { "Servidor Principal (HD)" }.uppercase()
 
-            if (src.isNotEmpty() && !videoList.any { it.url == src }) {
-                videoList.add(Video(src, qualityLabel, src, headers = streamHeaders))
+            if (src.isNotEmpty() && src.startsWith("http") && !videoList.any { it.url == src }) {
+                if (src.contains(".m3u8")) {
+                    runCatching {
+                        videoList.addAll(
+                            playlistUtils.extractFromHls(
+                                src,
+                                referer = pageUrl,
+                                videoNameGen = { q -> "Servidor Principal - $q" }
+                            )
+                        )
+                    }
+                } else {
+                    videoList.add(Video(src, qualityLabel, src, headers = streamHeaders))
+                }
             }
         }
 
@@ -127,6 +143,7 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     private fun extractVideosFromIframe(url: String): List<Video> {
         val videoList = mutableListOf<Video>()
+        val iframeHeaders = headers.newBuilder().set("Referer", url).build()
 
         when {
             "filemoon" in url || "moonplayer" in url -> {
@@ -139,21 +156,21 @@ class CosXplay : ParsedAnimeHttpSource() {
             "streamwish" in url || "swdyu" in url || "embedwish" in url -> {
                 runCatching {
                     runBlocking {
-                        videoList.addAll(StreamWishExtractor(client, headers).videosFromUrl(url))
+                        videoList.addAll(StreamWishExtractor(client, iframeHeaders).videosFromUrl(url))
                     }
                 }
             }
             "voe" in url -> {
                 runCatching {
                     runBlocking {
-                        videoList.addAll(VoeExtractor(client, headers).videosFromUrl(url))
+                        videoList.addAll(VoeExtractor(client, iframeHeaders).videosFromUrl(url))
                     }
                 }
             }
             "vidhide" in url || "hidev" in url -> {
                 runCatching {
                     runBlocking {
-                        videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(url))
+                        videoList.addAll(VidHideExtractor(client, iframeHeaders).videosFromUrl(url))
                     }
                 }
             }
@@ -167,9 +184,9 @@ class CosXplay : ParsedAnimeHttpSource() {
         return videoList
     }
 
-    override fun videoListSelector(): String = throw UnsupportedOperationException()
+    override fun videoListSelector(): String = throw UnsupportedOperationException("Not used")
 
-    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
+    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException("Not used")
 
-    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
+    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException("Not used")
 }
