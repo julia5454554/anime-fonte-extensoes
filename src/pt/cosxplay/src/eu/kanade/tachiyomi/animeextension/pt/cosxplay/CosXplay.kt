@@ -1,15 +1,15 @@
 package eu.kanade.tachiyomi.animeextension.pt.cosxplay
 
+import aniyomi.lib.doodextractor.DoodExtractor
+import aniyomi.lib.filemoonextractor.FilemoonExtractor
+import aniyomi.lib.streamwishextractor.StreamWishExtractor
+import aniyomi.lib.vidhideextractor.VidHideExtractor
+import aniyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
-import eu.kanade.tachiyomi.lib.doodextractor.DoodExtractor
-import eu.kanade.tachiyomi.lib.filemoonextractor.FilemoonExtractor
-import eu.kanade.tachiyomi.lib.streamwishextractor.StreamWishExtractor
-import eu.kanade.tachiyomi.lib.vidhideextractor.VidHideExtractor
-import eu.kanade.tachiyomi.lib.voeextractor.VoeExtractor
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
@@ -107,7 +107,6 @@ class CosXplay : ParsedAnimeHttpSource() {
         }
 
         // 2. Processa vídeos diretos do site (ex: nosofiles.com)
-        // O Referer DEVE ser a URL exata do post (pageUrl) para evitar o Erro HTTP 403
         val streamHeaders = Headers.Builder()
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
             .add("Referer", pageUrl)
@@ -128,7 +127,6 @@ class CosXplay : ParsedAnimeHttpSource() {
         return videoList
     }
 
-    // Método auxiliar para chamar os extractors do repositório
     private fun extractVideosFromIframe(url: String): List<Video> {
         val videoList = mutableListOf<Video>()
         try {
