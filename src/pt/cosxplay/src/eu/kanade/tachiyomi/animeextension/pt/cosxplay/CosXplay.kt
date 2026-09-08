@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import kotlinx.coroutines.runBlocking
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
@@ -105,7 +106,7 @@ class CosXplay : ParsedAnimeHttpSource() {
             videoList.addAll(extractVideosFromIframe(iframeUrl))
         }
 
-        // 2. Cabeçalho compatível para o player MPV não tomar HTTP 403 no 'nosofiles'
+        // 2. Stream principal MPV
         val streamHeaders = Headers.Builder()
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
             .add("Referer", pageUrl)
@@ -129,19 +130,37 @@ class CosXplay : ParsedAnimeHttpSource() {
 
         when {
             "filemoon" in url || "moonplayer" in url -> {
-                runCatching { videoList.addAll(FilemoonExtractor(client).videosFromUrl(url)) }
+                runCatching {
+                    runBlocking {
+                        videoList.addAll(FilemoonExtractor(client).videosFromUrl(url))
+                    }
+                }
             }
             "streamwish" in url || "swdyu" in url || "embedwish" in url -> {
-                runCatching { videoList.addAll(StreamWishExtractor(client, headers).videosFromUrl(url)) }
+                runCatching {
+                    runBlocking {
+                        videoList.addAll(StreamWishExtractor(client, headers).videosFromUrl(url))
+                    }
+                }
             }
             "voe" in url -> {
-                runCatching { videoList.addAll(VoeExtractor(client).videosFromUrl(url)) }
+                runCatching {
+                    runBlocking {
+                        videoList.addAll(VoeExtractor(client).videosFromUrl(url))
+                    }
+                }
             }
             "vidhide" in url || "hidev" in url -> {
-                runCatching { videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(url)) }
+                runCatching {
+                    runBlocking {
+                        videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(url))
+                    }
+                }
             }
             "dood" in url || "doodstream" in url -> {
-                runCatching { DoodExtractor(client).videoFromUrl(url)?.let { videoList.add(it) } }
+                runCatching {
+                    DoodExtractor(client).videoFromUrl(url)?.let { videoList.add(it) }
+                }
             }
         }
 
