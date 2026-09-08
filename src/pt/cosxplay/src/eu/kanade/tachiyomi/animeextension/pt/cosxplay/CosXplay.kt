@@ -37,33 +37,28 @@ class CosXplay : ParsedAnimeHttpSource() {
         .build()
 
     // ============================== Populares ==============================
-    override fun popularAnimeRequest(page: Int): Request {
-        return if (page > 1) GET("$baseUrl/page/$page/", headers) else GET(baseUrl, headers)
-    }
+    override fun popularAnimeRequest(page: Int): Request =
+        if (page > 1) GET("$baseUrl/page/$page/", headers) else GET(baseUrl, headers)
 
     override fun popularAnimeSelector(): String = ".video-block"
 
-    override fun popularAnimeFromElement(element: Element): SAnime {
-        return SAnime.create().apply {
-            title = element.selectFirst("span.title")?.text().orEmpty().trim()
-            setUrlWithoutDomain(element.selectFirst("a.thumb")?.attr("href").orEmpty())
+    override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
+        title = element.selectFirst("span.title")?.text().orEmpty().trim()
+        setUrlWithoutDomain(element.selectFirst("a.thumb")?.attr("href").orEmpty())
 
-            val img = element.selectFirst("img.video-img")
-            thumbnail_url = img?.let {
-                it.attr("data-src").ifEmpty { it.attr("abs:src") }
-            }
+        val img = element.selectFirst("img.video-img")
+        thumbnail_url = img?.let {
+            it.attr("data-src").ifEmpty { it.attr("abs:src") }
         }
     }
 
     override fun popularAnimeNextPageSelector(): String = "ul.pagination a.next"
 
     // =============================== Mais Recentes ==============================
-    override fun latestUpdatesRequest(page: Int): Request {
-        return if (page > 1) {
-            GET("$baseUrl/page/$page/?filter=latest", headers)
-        } else {
-            GET("$baseUrl/?filter=latest", headers)
-        }
+    override fun latestUpdatesRequest(page: Int): Request = if (page > 1) {
+        GET("$baseUrl/page/$page/?filter=latest", headers)
+    } else {
+        GET("$baseUrl/?filter=latest", headers)
     }
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
@@ -73,12 +68,10 @@ class CosXplay : ParsedAnimeHttpSource() {
     override fun latestUpdatesNextPageSelector(): String = popularAnimeNextPageSelector()
 
     // =============================== Pesquisa ==============================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return if (page > 1) {
-            GET("$baseUrl/page/$page/?s=$query", headers)
-        } else {
-            GET("$baseUrl/?s=$query", headers)
-        }
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = if (page > 1) {
+        GET("$baseUrl/page/$page/?s=$query", headers)
+    } else {
+        GET("$baseUrl/?s=$query", headers)
     }
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
@@ -88,27 +81,23 @@ class CosXplay : ParsedAnimeHttpSource() {
     override fun searchAnimeNextPageSelector(): String = popularAnimeNextPageSelector()
 
     // =========================== Detalhes ===========================
-    override fun animeDetailsParse(document: Document): SAnime {
-        return SAnime.create().apply {
-            title = document.selectFirst(".top-h1 h1, h1")?.text().orEmpty().trim()
-            description = document.selectFirst(".description, .entry-content")?.text()
-            genre = document.select(".tags-list a.label-tag-video, .tags-list a.label-cat-video")
-                .map { it.text().trim() }
-                .filter { it.isNotEmpty() }
-                .joinToString(", ")
-            thumbnail_url = document.selectFirst("meta[property=\"og:image\"]")?.attr("content")
-        }
+    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
+        title = document.selectFirst(".top-h1 h1, h1")?.text().orEmpty().trim()
+        description = document.selectFirst(".description, .entry-content")?.text()
+        genre = document.select(".tags-list a.label-tag-video, .tags-list a.label-cat-video")
+            .map { it.text().trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString(", ")
+        thumbnail_url = document.selectFirst("meta[property=\"og:image\"]")?.attr("content")
     }
 
     // ============================== Episódios =============================
     override fun episodeListSelector(): String = "html"
 
-    override fun episodeFromElement(element: Element): SEpisode {
-        return SEpisode.create().apply {
-            name = "Vídeo Completo"
-            episode_number = 1f
-            setUrlWithoutDomain(element.ownerDocument()?.location().orEmpty())
-        }
+    override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
+        name = "Vídeo Completo"
+        episode_number = 1f
+        setUrlWithoutDomain(element.ownerDocument()?.location().orEmpty())
     }
 
     // ============================ Links de Vídeo ============================
@@ -129,6 +118,8 @@ class CosXplay : ParsedAnimeHttpSource() {
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()
+
     override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
+
     override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
 }
