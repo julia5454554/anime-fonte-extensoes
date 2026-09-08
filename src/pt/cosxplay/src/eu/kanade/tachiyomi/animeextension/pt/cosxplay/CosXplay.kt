@@ -98,7 +98,6 @@ class CosXplay : ParsedAnimeHttpSource() {
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
-        val pageUrl = response.request.url.toString()
 
         // 1. Processa IFrames externos via Extractors da pasta 'lib'
         document.select("iframe[src]").forEach { iframe ->
@@ -108,10 +107,10 @@ class CosXplay : ParsedAnimeHttpSource() {
             }
         }
 
-        // 2. Stream principal com o Referer da própria página do episódio
-        val streamHeaders = headers.newBuilder()
-            .set("Referer", pageUrl)
-            .set("Accept", "*/*")
+        // 2. Stream principal MPV/ExoPlayer (Sem Cookies do site para não dar 403 na CDN)
+        val streamHeaders = Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+            .add("Referer", "$baseUrl/")
             .build()
 
         document.select("video.xp-Player-video source, video source, source[src]").forEach { element ->
