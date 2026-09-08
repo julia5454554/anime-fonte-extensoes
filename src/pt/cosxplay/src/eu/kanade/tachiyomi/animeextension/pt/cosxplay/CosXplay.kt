@@ -8,7 +8,6 @@ import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -21,20 +20,10 @@ class CosXplay : ParsedAnimeHttpSource() {
     override val lang = "pt"
     override val supportsLatest = true
 
-    override val headers: Headers = super.headers.newBuilder()
+    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Cookie", "age-allow-cosxplay-com=1; abn_country=BR")
         .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
         .add("Referer", "$baseUrl/")
-        .build()
-
-    override val client: OkHttpClient = network.client.newBuilder()
-        .addInterceptor { chain ->
-            val request = chain.request().newBuilder()
-                .headers(headers)
-                .build()
-            chain.proceed(request)
-        }
-        .build()
 
     // ============================== Populares ==============================
     override fun popularAnimeRequest(page: Int): Request = if (page > 1) GET("$baseUrl/page/$page/", headers) else GET(baseUrl, headers)
