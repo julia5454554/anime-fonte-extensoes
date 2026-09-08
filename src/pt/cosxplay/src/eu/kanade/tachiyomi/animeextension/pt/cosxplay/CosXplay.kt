@@ -12,13 +12,11 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
-import kotlinx.coroutines.runBlocking
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.lang.Exception
 
 class CosXplay : ParsedAnimeHttpSource() {
 
@@ -107,18 +105,16 @@ class CosXplay : ParsedAnimeHttpSource() {
             videoList.addAll(extractVideosFromIframe(iframeUrl))
         }
 
-        // 2. Processa vídeos diretos do site (ex: nosofiles.com)
+        // 2. Cabeçalho compatível para o player MPV não tomar HTTP 403 no 'nosofiles'
         val streamHeaders = Headers.Builder()
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
             .add("Referer", pageUrl)
-            .add("Origin", baseUrl)
             .add("Accept", "*/*")
-            .add("Cookie", "age-allow-cosxplay-com=1; abn_country=BR")
             .build()
 
         document.select("video.xp-Player-video source, video source, source").forEach { element ->
             val src = element.attr("abs:src").ifEmpty { element.attr("src") }
-            val qualityLabel = element.attr("title").ifEmpty { "HD" }.uppercase()
+            val qualityLabel = element.attr("title").ifEmpty { "Servidor Principal (HD)" }.uppercase()
 
             if (src.isNotEmpty() && !videoList.any { it.url == src }) {
                 videoList.add(Video(src, qualityLabel, src, headers = streamHeaders))
@@ -130,33 +126,25 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     private fun extractVideosFromIframe(url: String): List<Video> {
         val videoList = mutableListOf<Video>()
-        try {
-            when {
-                "filemoon" in url || "moonplayer" in url -> {
-                    videoList.addAll(FilemoonExtractor(client).videosFromUrl(url))
-                }
-                "streamwish" in url || "swdyu" in url || "embedwish" in url -> {
-                    runBlocking {
-                        videoList.addAll(StreamWishExtractor(client, headers).videosFromUrl(url))
-                    }
-                }
-                "voe" in url -> {
-                    runBlocking {
-                        videoList.addAll(VoeExtractor(client, headers).videosFromUrl(url))
-                    }
-                }
-                "vidhide" in url || "hidev" in url -> {
-                    runBlocking {
-                        videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(url))
-                    }
-                }
-                "dood" in url || "doodstream" in url -> {
-                    DoodExtractor(client).videoFromUrl(url)?.let { videoList.add(it) }
-                }
+
+        when {
+            "filemoon" in url || "moonplayer" in url -> {
+                runCatching { videoList.addAll(FilemoonExtractor(client).videosFromUrl(url)) }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+            "streamwish" in url || "swdyu" in url || "embedwish" in url -> {
+                runCatching { videoList.addAll(StreamWishExtractor(client, headers).videosFromUrl(url)) }
+            }
+            "voe" in url -> {
+                runCatching { videoList.addAll(VoeExtractor(client).videosFromUrl(url)) }
+            }
+            "vidhide" in url || "hidev" in url -> {
+                runCatching { videoList.addAll(VidHideExtractor(client, headers).videosFromUrl(url)) }
+            }
+            "dood" in url || "doodstream" in url -> {
+                runCatching { DoodExtractor(client).videoFromUrl(url)?.let { videoList.add(it) } }
+            }
         }
+
         return videoList
     }
 
