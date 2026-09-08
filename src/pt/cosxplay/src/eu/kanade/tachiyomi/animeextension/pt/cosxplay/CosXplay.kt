@@ -37,8 +37,7 @@ class CosXplay : ParsedAnimeHttpSource() {
         .build()
 
     // ============================== Populares ==============================
-    override fun popularAnimeRequest(page: Int): Request =
-        if (page > 1) GET("$baseUrl/page/$page/", headers) else GET(baseUrl, headers)
+    override fun popularAnimeRequest(page: Int): Request = if (page > 1) GET("$baseUrl/page/$page/", headers) else GET(baseUrl, headers)
 
     override fun popularAnimeSelector(): String = ".video-block"
 
