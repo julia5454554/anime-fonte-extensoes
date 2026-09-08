@@ -2,7 +2,6 @@ ext {
     extName = 'CosXplay'
     extClass = '.CosXplay'
     extVersionCode = 1
-    libVersion = '14'
     isNsfw = true
 }
 
