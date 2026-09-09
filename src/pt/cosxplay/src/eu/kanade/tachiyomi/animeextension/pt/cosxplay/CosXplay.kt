@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.pt.cosxplay
 
+import android.util.Log
 import aniyomi.lib.doodextractor.DoodExtractor
 import aniyomi.lib.filemoonextractor.FilemoonExtractor
 import aniyomi.lib.streamwishextractor.StreamWishExtractor
@@ -100,6 +101,9 @@ class CosXplay : ParsedAnimeHttpSource() {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
 
+        // Log da página carregada
+        Log.e("COSXPLAY", "PAGE = ${response.request.url}")
+
         // Headers reutilizados para todas as requisições de vídeo
         val videoHeaders = Headers.Builder()
             .add(
@@ -126,6 +130,18 @@ class CosXplay : ParsedAnimeHttpSource() {
             val src = video.attr("abs:src").ifEmpty { video.attr("src") }
 
             if (src.isNotBlank() && src.startsWith("http") && !videoList.any { it.url == src }) {
+                // Log da URL encontrada
+                Log.e("COSXPLAY", "URL = $src")
+
+                // Teste direto da URL para diagnóstico
+                runCatching {
+                    val test = client.newCall(
+                        GET(src, videoHeaders)
+                    ).execute()
+                    Log.e("COSXPLAY", "VIDEO STATUS = ${test.code}")
+                    test.close()
+                }
+
                 videoList.add(
                     Video(
                         url = src,
@@ -142,6 +158,18 @@ class CosXplay : ParsedAnimeHttpSource() {
             val src = element.attr("abs:src").ifEmpty { element.attr("src") }
 
             if (src.isBlank() || !src.startsWith("http")) return@forEach
+
+            // Log da URL encontrada
+            Log.e("COSXPLAY", "URL = $src")
+
+            // Teste direto da URL para diagnóstico
+            runCatching {
+                val test = client.newCall(
+                    GET(src, videoHeaders)
+                ).execute()
+                Log.e("COSXPLAY", "VIDEO STATUS = ${test.code}")
+                test.close()
+            }
 
             val quality = element.attr("title")
                 .ifEmpty { element.attr("res") }
