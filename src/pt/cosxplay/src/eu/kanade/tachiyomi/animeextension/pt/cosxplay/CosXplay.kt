@@ -30,6 +30,7 @@ class CosXplay : ParsedAnimeHttpSource() {
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         .add("Cookie", "age-allow-cosxplay-com=1; abn_country=BR")
         .add("Referer", "$baseUrl/")
+        .add("Origin", baseUrl)
 
     // ============================== Populares ==============================
     override fun popularAnimeRequest(page: Int): Request = if (page > 1) GET("$baseUrl/page/$page/", headers) else GET(baseUrl, headers)
@@ -99,6 +100,19 @@ class CosXplay : ParsedAnimeHttpSource() {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
 
+        // Headers reutilizados para todas as requisições de vídeo
+        val videoHeaders = Headers.Builder()
+            .add(
+                "User-Agent",
+                "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36"
+            )
+            .add("Referer", "https://cosxplay.com/")
+            .add("Origin", "https://cosxplay.com")
+            .add("Accept", "*/*")
+            .add("Accept-Encoding", "identity")
+            .add("Range", "bytes=0-")
+            .build()
+
         // 1. Processa IFrames externos via Extractors da pasta 'lib'
         document.select("iframe[src]").forEach { iframe ->
             val iframeUrl = iframe.attr("abs:src")
@@ -107,25 +121,43 @@ class CosXplay : ParsedAnimeHttpSource() {
             }
         }
 
-        // 2. Stream principal MPV/ExoPlayer (Sem Cookies do site para não dar 403 na CDN)
-        val streamHeaders = Headers.Builder()
-            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-            .add("Referer", "$baseUrl/")
-            .build()
-
-        document.select("video.xp-Player-video source, video source, source[src]").forEach { element ->
-            val src = element.attr("abs:src").ifEmpty { element.attr("src") }
-            val qualityLabel = element.attr("title")
-                .ifEmpty { element.attr("res") }
-                .ifEmpty { "Servidor Principal (HD)" }
-                .uppercase()
+        // 2. Stream principal direto no atributo src do <video>
+        document.select("video[src]").forEach { video ->
+            val src = video.attr("abs:src").ifEmpty { video.attr("src") }
 
             if (src.isNotBlank() && src.startsWith("http") && !videoList.any { it.url == src }) {
-                videoList.add(Video(src, qualityLabel, src, headers = streamHeaders))
+                videoList.add(
+                    Video(
+                        url = src,
+                        quality = "NOSOFILES - VIDEO",
+                        videoUrl = src,
+                        headers = videoHeaders
+                    )
+                )
             }
         }
 
-        return videoList
+        // 3. Stream principal via tags <source> dentro de <video>
+        document.select("video.xp-Player-video source, video source, source[src]").forEach { element ->
+            val src = element.attr("abs:src").ifEmpty { element.attr("src") }
+
+            if (src.isBlank() || !src.startsWith("http")) return@forEach
+
+            val quality = element.attr("title")
+                .ifEmpty { element.attr("res") }
+                .ifEmpty { "HD" }
+
+            videoList.add(
+                Video(
+                    url = src,
+                    quality = "NOSOFILES - $quality",
+                    videoUrl = src,
+                    headers = videoHeaders
+                )
+            )
+        }
+
+        return videoList.distinctBy { it.url }
     }
 
     private fun extractVideosFromIframe(url: String): List<Video> {
