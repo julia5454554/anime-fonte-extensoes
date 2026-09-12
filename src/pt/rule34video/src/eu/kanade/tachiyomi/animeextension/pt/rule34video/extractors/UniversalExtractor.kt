@@ -69,7 +69,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 val fullUrl = normalizeIframeUrl(raw, pageUrl)
                 Log.e(tag, "[3] Testando iframe: $fullUrl")
 
-                // 3a. Blogger/GoogleVideo direto
                 runCatching {
                     val bloggerVideos = runBlocking {
                         bloggerExtractor.videosFromUrl(fullUrl, baseHeaders, "Blogger")
@@ -77,11 +76,9 @@ class UniversalExtractor(private val client: OkHttpClient) {
                     if (bloggerVideos.isNotEmpty()) {
                         Log.e(tag, "[3a] Blogger retornou ${bloggerVideos.size} vídeo(s).")
                         videos.addAll(bloggerVideos)
-                        return@runCatching
                     }
                 }.onFailure { Log.e(tag, "[3a] Erro Blogger: ${it.message}") }
 
-                // 3b. Baixa o HTML do iframe e tenta achar mp4/obfuscated dentro
                 if (videos.isEmpty()) {
                     val innerHtml = fetchHtml(fullUrl, pageUrl) ?: continue
                     obfuscatedRegex.find(innerHtml)?.let { m ->
@@ -123,7 +120,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
             )
             sourceRegex.findAll(html).forEach { m ->
                 val raw = m.groupValues[1]
-                if (raw.startsWith("blob:")) return@forEach // isca
+                if (raw.startsWith("blob:")) return@forEach
                 val url = sanitize(raw)
                 if (url.startsWith("http") && videos.none { it.url == url }) {
                     Log.e(tag, "[5] source: $url")
@@ -170,8 +167,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
         else -> raw
     }
 
-    private fun sortByQuality(videos: List<Video>): List<Video> =
-        videos.sortedByDescending { extractResolution(it.quality) }
+    private fun sortByQuality(videos: List<Video>): List<Video> = videos.sortedByDescending { extractResolution(it.quality) }
 
     private fun extractResolution(label: String): Int {
         val m = Regex("""(\d{3,4})p""").find(label)
