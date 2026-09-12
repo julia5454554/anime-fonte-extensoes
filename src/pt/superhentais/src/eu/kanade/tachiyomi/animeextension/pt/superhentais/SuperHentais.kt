@@ -11,7 +11,6 @@ import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -80,7 +79,8 @@ class SuperHentais : AnimeHttpSource() {
 
     // ==================== DETALHES ====================
 
-    override fun animeDetailsParse(document: Document): SAnime {
+    override fun animeDetailsParse(response: Response): SAnime {
+        val document = response.asJsoup()
         val anime = SAnime.create()
 
         anime.title = document.selectFirst("h1[itemprop=name]")?.text()?.trim()
@@ -127,13 +127,10 @@ class SuperHentais : AnimeHttpSource() {
                 ?: element.selectFirst("meta[itemprop=episodeNumber]")?.attr("content")?.toFloatOrNull()
                 ?: (index + 1).toFloat()
 
-            val epThumb = element.selectFirst("img")?.attr("abs:src") ?: ""
-
             val episode = SEpisode.create().apply {
                 name = epName
                 setUrlWithoutDomain(href)
                 episode_number = epNumber
-                thumbnail_url = epThumb
                 date_upload = 0L
             }
             episodes.add(episode)
