@@ -1,0 +1,11 @@
+ext {
+    extName = 'Rule34Video'
+    extClass = '.Rule34Video'
+    baseUrl = 'https://rule34video.co'
+    extVersionCode = 1
+    isNsfw = true
+}
+
+apply plugin: "kei.plugins.extension.legacy"
+
+// Sem dependências externas — extração é 100% própria (deobfuscation).
