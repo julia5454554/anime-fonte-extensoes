@@ -1,13 +1,10 @@
 package eu.kanade.tachiyomi.animeextension.pt.cosxplay
 
-import android.util.Base64
 import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.json.JSONObject
-import java.net.URLDecoder
 
 class ProxyServer(private val client: OkHttpClient) : NanoHTTPD("127.0.0.1", 0) {
 
@@ -15,17 +12,14 @@ class ProxyServer(private val client: OkHttpClient) : NanoHTTPD("127.0.0.1", 0) 
         if (session.uri != "/proxy") {
             return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
         }
-        val params = session.parameters
-        val urlParam = params["url"]?.firstOrNull()
+        // NanoHTTPD já decodifica query params — NÃO decodificar de novo
+        val targetUrl = session.parameters["url"]?.firstOrNull()
             ?: return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "missing url")
-        val headersParam = params["h"]?.firstOrNull()
 
-        val targetUrl = URLDecoder.decode(urlParam, "UTF-8")
-        val headerMap = decodeHeaders(headersParam)
-
-        val reqHeaders = Headers.Builder().apply {
-            headerMap.forEach { (k, v) -> set(k, v) }
-        }.build()
+        val reqHeaders = Headers.Builder()
+            .set("User-Agent", UA)
+            .set("Accept", "*/*")
+            .build()
 
         val reqBuilder = Request.Builder().url(targetUrl).headers(reqHeaders).get()
         session.headers["range"]?.let { reqBuilder.header("Range", it) }
@@ -64,18 +58,9 @@ class ProxyServer(private val client: OkHttpClient) : NanoHTTPD("127.0.0.1", 0) 
         return nano
     }
 
-    private fun decodeHeaders(b64: String?): Map<String, String> {
-        if (b64.isNullOrEmpty()) return emptyMap()
-        return try {
-            val json = String(Base64.decode(b64, Base64.URL_SAFE or Base64.NO_WRAP))
-            val obj = JSONObject(json)
-            obj.keys().asSequence().associateWith { obj.getString(it) }
-        } catch (_: Exception) {
-            emptyMap()
-        }
-    }
-
     companion object {
         private const val TAG = "CosXplayProxy"
+        const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 }
