@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.pt.cosxplay
 
-import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -8,10 +7,12 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import fi.iki.elonen.NanoHTTPD
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
 
 class CosXplay : ParsedAnimeHttpSource() {
 
@@ -20,11 +21,9 @@ class CosXplay : ParsedAnimeHttpSource() {
     override val lang = "pt"
     override val supportsLatest = true
 
-    private val chromeUa =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-    private val m3u8Integration by lazy { M3u8Integration(client) }
+    private val proxyServer by lazy {
+        ProxyServer(client).also { it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
+    }
 
     // ==================== Populares ====================
 
@@ -88,25 +87,22 @@ class CosXplay : ParsedAnimeHttpSource() {
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create()
 
     // ==================== Vídeos ====================
-    // O CDN nosofiles.com exige Referer/Origin, mas o mpv ignora esses headers.
-    // Solução: passar a lista por M3u8Integration, que expõe URLs locais (proxy)
-    // e injeta os headers originais no request real ao CDN.
+    // mpv ignora headers customizados → usa proxy local que injeta Referer/Origin/UA.
+    // Download continua usando a URL direta (funciona, pois OkHttp respeita headers).
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val pageUrl = response.request.url.toString()
-        val videoHeaders = headers.newBuilder()
-            .set("User-Agent", chromeUa)
-            .set("Referer", pageUrl)
-            .set("Origin", baseUrl)
-            .build()
-        val videos = document.select("video source").mapNotNull { source ->
+        val port = proxyServer.listeningPort
+        val encodedRef = URLEncoder.encode(pageUrl, "UTF-8")
+        return document.select("video source").mapNotNull { source ->
             val src = source.attr("src")
             if (src.isEmpty()) return@mapNotNull null
             val quality = source.attr("title").ifBlank { "Vídeo" }
-            Video(src, quality, src, videoHeaders)
+            val encodedUrl = URLEncoder.encode(src, "UTF-8")
+            val localUrl = "http://127.0.0.1:$port/proxy?url=$encodedUrl&ref=$encodedRef"
+            Video(localUrl, quality, src)
         }
-        return m3u8Integration.processVideoList(videos)
     }
 
     override fun videoListSelector(): String = "video source"
