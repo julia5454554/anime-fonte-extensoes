@@ -89,12 +89,13 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val videoHeaders = buildVideoHeaders()
+        val pageUrl = response.request.url.toString()
         return document.select("video source").mapNotNull { source ->
             val src = source.attr("src")
             if (src.isEmpty()) return@mapNotNull null
             val quality = source.attr("title").ifBlank { "Vídeo" }
-            Video(src, quality, src, videoHeaders)
+            val workingHeaders = pickBestHeaders(src, pageUrl)
+            Video(src, quality, src, workingHeaders)
         }
     }
 
@@ -106,16 +107,51 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     // ==================== Helpers ====================
 
-    private fun buildVideoHeaders(): Headers = headers.newBuilder()
-        .set("User-Agent", chromeUa)
-        .set("Accept", "*/*")
-        .set("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
-        .set("Origin", baseUrl)
-        .set("Referer", "$baseUrl/")
-        .set("Sec-Fetch-Dest", "video")
-        .set("Sec-Fetch-Mode", "no-cors")
-        .set("Sec-Fetch-Site", "cross-site")
-        .build()
+    private fun pickBestHeaders(url: String, refererUrl: String): Headers {
+        val variants = listOf(
+            headers.newBuilder()
+                .set("User-Agent", chromeUa)
+                .set("Referer", refererUrl)
+                .set("Origin", baseUrl)
+                .set("Accept", "*/*")
+                .set("Range", "bytes=0-")
+                .build(),
+            headers.newBuilder()
+                .set("User-Agent", chromeUa)
+                .set("Referer", "$baseUrl/")
+                .set("Origin", baseUrl)
+                .set("Range", "bytes=0-")
+                .build(),
+            headers.newBuilder()
+                .set("User-Agent", chromeUa)
+                .set("Referer", refererUrl)
+                .build(),
+            headers.newBuilder()
+                .set("User-Agent", chromeUa)
+                .set("Referer", "$baseUrl/")
+                .build(),
+            headers.newBuilder()
+                .set("User-Agent", chromeUa)
+                .build(),
+        )
+        for (h in variants) {
+            try {
+                val probe = Request.Builder()
+                    .url(url)
+                    .headers(h)
+                    .get()
+                    .header("Range", "bytes=0-1")
+                    .build()
+                val resp = client.newCall(probe).execute()
+                val code = resp.code
+                resp.close()
+                if (code in 200..299) return h
+            } catch (_: Exception) {
+                // tenta a próxima variante
+            }
+        }
+        return variants.first()
+    }
 
     private fun parseCard(element: Element): SAnime {
         val link = element.selectFirst("a.thumb")?.attr("href") ?: ""
