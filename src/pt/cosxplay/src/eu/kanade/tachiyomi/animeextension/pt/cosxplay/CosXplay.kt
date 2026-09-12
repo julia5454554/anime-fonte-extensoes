@@ -6,7 +6,9 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Request
+import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
@@ -62,26 +64,38 @@ class CosXplay : ParsedAnimeHttpSource() {
     }
 
     // ==================== Episódios ====================
-    // Extrai o ID do post direto do atributo id="post-76856" do <article>.
+    // 1 episódio = própria página do post (que já contém o <video><source>)
+
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val pageUrl = response.request.url.toString()
+        return listOf(
+            SEpisode.create().apply {
+                setUrlWithoutDomain(pageUrl.removePrefix(baseUrl))
+                name = "Vídeo"
+                episode_number = 1f
+            },
+        )
+    }
 
     override fun episodeListSelector(): String = "article.post"
 
-    override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
-        val id = element.id().removePrefix("post-")
-        setUrlWithoutDomain("/embed/$id/")
-        name = "Vídeo"
-        episode_number = 1f
-    }
+    override fun episodeFromElement(element: Element): SEpisode = SEpisode.create()
 
     // ==================== Vídeos ====================
 
+    override fun videoListParse(response: Response): List<Video> {
+        val document = response.asJsoup()
+        return document.select("video source").mapNotNull { source ->
+            val src = source.attr("src")
+            if (src.isEmpty()) return@mapNotNull null
+            val quality = source.attr("title").ifBlank { "Vídeo" }
+            Video(src, quality, src)
+        }
+    }
+
     override fun videoListSelector(): String = "video source"
 
-    override fun videoFromElement(element: Element): Video {
-        val src = element.attr("src")
-        val quality = element.attr("title").ifBlank { "Vídeo" }
-        return Video(src, quality, src)
-    }
+    override fun videoFromElement(element: Element): Video = Video("", "", "")
 
     override fun videoUrlParse(document: Document): String = ""
 
