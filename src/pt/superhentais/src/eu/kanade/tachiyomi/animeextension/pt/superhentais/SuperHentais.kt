@@ -56,8 +56,11 @@ class SuperHentais : AnimeHttpSource() {
 
     private fun animeFromElement(element: Element): SAnime? {
         val linkElement = element.selectFirst("a[itemprop=url], h2.grid_title a, h2 a") ?: return null
-        val href = linkElement.attr("href")
+        val href = linkElement.attr("abs:href").ifBlank { linkElement.attr("href") }
         if (href.isBlank()) return null
+
+        // ⚠️ FILTRO: aceitar apenas links de ANIME, ignorando mangás e outros
+        if (!href.contains("/anime-hentai/")) return null
 
         val title = element.selectFirst("h2.grid_title a, h2 a")?.text()?.trim()
             ?: linkElement.attr("title").trim()
