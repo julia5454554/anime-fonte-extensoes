@@ -272,27 +272,25 @@ class SuperHentais : AnimeHttpSource() {
         url: String,
         referer: String,
         userAgent: String,
-    ): String? {
-        return try {
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", userAgent)
-                .header("Referer", referer)
-                .header("Origin", baseUrl)
-                .header("Accept", "*/*")
-                .header("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
-                .build()
+    ): String? = try {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", userAgent)
+            .header("Referer", referer)
+            .header("Origin", baseUrl)
+            .header("Accept", "*/*")
+            .header("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
+            .build()
 
-            noRedirectClient.newCall(request).execute().use { resp ->
-                if (resp.isRedirect) {
-                    resp.header("Location")
-                } else {
-                    null
-                }
+        noRedirectClient.newCall(request).execute().use { resp ->
+            if (resp.isRedirect) {
+                resp.header("Location")
+            } else {
+                null
             }
-        } catch (_: Exception) {
-            null
         }
+    } catch (_: Exception) {
+        null
     }
 
     private fun createVideo(url: String, quality: String, pageUrl: String): Video {
@@ -304,12 +302,10 @@ class SuperHentais : AnimeHttpSource() {
         return Video(url, quality, url, videoHeaders)
     }
 
-    private fun parseDate(dateStr: String): Long {
-        return try {
-            val format = SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR"))
-            format.parse(dateStr)?.time ?: 0L
-        } catch (_: Exception) {
-            0L
-        }
+    private fun parseDate(dateStr: String): Long = try {
+        val format = SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR"))
+        format.parse(dateStr)?.time ?: 0L
+    } catch (_: Exception) {
+        0L
     }
 }
