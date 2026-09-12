@@ -20,94 +20,119 @@ class UniversalExtractor(private val client: OkHttpClient) {
         val headers = Headers.Builder()
             .add("User-Agent", uaDesktop)
             .add("Referer", pageUrl)
-            .add("Origin", "https://superhentais.com.br")
             .build()
 
-        // 1. Tenta extrator padrão do Blogger
+        // 1. Tenta extrator padrão do Blogger com a URL do iframe
         runCatching {
             val videos = runBlocking { bloggerExtractor.videosFromUrl(iframeUrl, headers, "Blogger") }
             if (videos.isNotEmpty()) return videos
         }
 
-        // 2. Resolve redirecionamentos
-        val finalUrl = resolveRedirect(iframeUrl, pageUrl) ?: iframeUrl
+        // 2. Resolve redirects da URL do iframe
+        val resolvedUrl = resolveRedirect(iframeUrl, pageUrl) ?: iframeUrl
 
-        // 3. Tenta o BloggerExtractor com a URL resolvida
         runCatching {
-            val videos = runBlocking { bloggerExtractor.videosFromUrl(finalUrl, headers, "Blogger") }
+            val videos = runBlocking { bloggerExtractor.videosFromUrl(resolvedUrl, headers, "Blogger") }
             if (videos.isNotEmpty()) return videos
         }
 
-        // 4. Raspagem direta no HTML do iframe (fallback para extrair .mp4 diretamente)
-        val extractedVideos = extractMp4FromHtml(finalUrl, headers)
+        // 3. Baixa o HTML para buscar iframes internos ou links diretos
+        val htmlContent = fetchHtml(resolvedUrl, headers) ?: return emptyList()
+
+        // Procura por um iframe interno do blogger na página
+        val innerIframeRegex = """<iframe[^>]+src=["']([^"']+)["']""".toRegex(RegexOption.IGNORE_CASE)
+        val innerIframeMatch = innerIframeRegex.find(htmlContent)?.groupValues?.get(1)
+
+        if (!innerIframeMatch.isNullOrBlank()) {
+            val fullInnerUrl = if (innerIframeMatch.startsWith("http")) {
+                innerIframeMatch
+            } else {
+                "https:" + innerIframeMatch.removePrefix("https:").removePrefix("http:")
+            }
+            runCatching {
+                val videos = runBlocking { bloggerExtractor.videosFromUrl(fullInnerUrl, headers, "Blogger") }
+                if (videos.isNotEmpty()) return videos
+            }
+        }
+
+        // 4. Extração manual decodificando e tratando as URLs do Google Video
+        val extractedVideos = extractMp4FromHtml(htmlContent)
         if (extractedVideos.isNotEmpty()) {
             return extractedVideos
         }
 
-        // 5. Só retorna no fallback se for explicitamente um link direto de vídeo
-        if (isDirectVideoUrl(finalUrl)) {
-            return listOf(Video(finalUrl, "Padrão", finalUrl, headers))
-        }
-
-        Log.e(tag, "Nenhum link de vídeo válido encontrado.")
+        Log.e(tag, "Nenhum vídeo válido pôde ser extraído.")
         return emptyList()
     }
 
-    private fun extractMp4FromHtml(url: String, headers: Headers): List<Video> = try {
+    private fun fetchHtml(url: String, headers: Headers): String? = try {
         val request = Request.Builder().url(url).headers(headers).build()
-        val response = client.newCall(request).execute()
-        val body = response.body?.string() ?: ""
-
-        // Regex para buscar streams do Blogger/Google Video no HTML
-        val mp4Regex = """https?://[^\s"'<>]+(?:\.mp4|googlevideo\.com/videoplayback)[^\s"'<>]*""".toRegex()
-        val matches = mp4Regex.findAll(body).map { it.value }.distinct().toList()
-
-        matches.mapIndexed { index, videoUrl ->
-            Video(videoUrl, "Blogger Direct ${index + 1}", videoUrl, headers)
+        client.newCall(request).execute().use { response ->
+            response.body?.string()
         }
     } catch (e: Exception) {
-        Log.e(tag, "Erro ao extrair HTML: ${e.message}")
-        emptyList()
+        Log.e(tag, "Erro ao buscar HTML: ${e.message}")
+        null
     }
 
-    private fun isDirectVideoUrl(url: String): Boolean {
-        val cleanUrl = url.lowercase()
-        return cleanUrl.contains(".mp4") ||
-            cleanUrl.contains(".m3u8") ||
-            cleanUrl.contains("googlevideo.com/videoplayback")
-    }
+    private fun extractMp4FromHtml(html: String): List<Video> {
+        val videoList = mutableListOf<Video>()
 
-    private fun resolveRedirect(url: String, referer: String): String? {
-        return try {
-            val noRedirect = client.newBuilder()
-                .followRedirects(false)
-                .followSslRedirects(false)
-                .build()
+        // Busca por URLs do googlevideo ou arquivos mp4 dentro do HTML/JS
+        val regex = """https?://[^\s"'<>]+?(?:googlevideo\.com/videoplayback|\.mp4)[^\s"'<>]*""".toRegex()
+        val matches = regex.findAll(html).map { it.value }.distinct().toList()
 
-            var currentUrl = url
-            var hops = 0
+        matches.forEachIndexed { index, rawUrl ->
+            // Limpa as URLs corrigindo os escapes do JSON (\u0026) e HTML (&amp;)
+            val cleanUrl = rawUrl
+                .replace("\\u0026", "&")
+                .replace("&amp;", "&")
+                .replace("\\/", "/")
+                .trimEnd('\\', '"', '\'', ';')
 
-            while (hops < 5) {
-                hops++
-                val request = Request.Builder()
-                    .url(currentUrl)
-                    .header("User-Agent", uaDesktop)
-                    .header("Referer", referer)
+            if (cleanUrl.contains("googlevideo.com") || cleanUrl.contains(".mp4")) {
+                // Headers necessários para o ExoPlayer não receber HTTP 403 do Google
+                val videoHeaders = Headers.Builder()
+                    .add("User-Agent", uaDesktop)
+                    .add("Referer", "https://www.blogger.com/")
                     .build()
 
-                val resp = noRedirect.newCall(request).execute()
-                resp.use {
-                    if (it.isRedirect) {
-                        val location = it.header("Location") ?: return currentUrl
-                        currentUrl = if (location.startsWith("http")) location else java.net.URI(currentUrl).resolve(location).toString()
-                        continue
-                    }
-                    return currentUrl
-                }
+                videoList.add(Video(cleanUrl, "Blogger SD/HD ${index + 1}", cleanUrl, videoHeaders))
             }
-            currentUrl
-        } catch (e: Exception) {
-            null
         }
+
+        return videoList
+    }
+
+    private fun resolveRedirect(url: String, referer: String): String? = try {
+        val noRedirect = client.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+
+        var currentUrl = url
+        var hops = 0
+
+        while (hops < 5) {
+            hops++
+            val request = Request.Builder()
+                .url(currentUrl)
+                .header("User-Agent", uaDesktop)
+                .header("Referer", referer)
+                .build()
+
+            val resp = noRedirect.newCall(request).execute()
+            resp.use {
+                if (it.isRedirect) {
+                    val location = it.header("Location") ?: return currentUrl
+                    currentUrl = if (location.startsWith("http")) location else java.net.URI(currentUrl).resolve(location).toString()
+                    continue
+                }
+                return currentUrl
+            }
+        }
+        currentUrl
+    } catch (e: Exception) {
+        null
     }
 }
