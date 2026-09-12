@@ -21,7 +21,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
         val videos = mutableListOf<Video>()
         val seen = mutableSetOf<String>()
 
-        // Tenta com 2 UAs diferentes
         val attempts = listOf(
             "360p" to uaMobile,
             "720p" to uaDesktop,
@@ -50,7 +49,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
             Log.d(tag, "  ✅ ADICIONADO: $realQuality → ${finalUrl.take(120)}...")
         }
 
-        // FALLBACK FINAL: se nada funcionou, entrega o iframe direto pro ExoPlayer
         if (videos.isEmpty()) {
             Log.w(tag, "⚠️ Nenhum redirect funcionou, usando iframe URL como fallback")
             val videoHeaders = Headers.Builder()
@@ -66,29 +64,19 @@ class UniversalExtractor(private val client: OkHttpClient) {
         return videos
     }
 
-    /**
-     * Tenta múltiplas estratégias para obter a URL final do vídeo:
-     *   1. Seguindo redirect com Referer da página
-     *   2. Seguindo redirect sem Referer (o Blogger pode esperar isso)
-     *   3. Lendo o HTML da resposta (caso o t_param.php retorne HTML com o player)
-     *   4. Lendo header Location manualmente (caso followRedirects falhe)
-     */
     private fun tryFetchVideoUrl(url: String, referer: String, ua: String): String? {
-        // Estratégia 1: com Referer
         Log.d(tag, "Estratégia 1: redirect com Referer")
         tryFetchWithHeaders(url, referer, ua, withReferer = true)?.let {
             Log.d(tag, "  ✅ Estratégia 1 funcionou")
             return it
         }
 
-        // Estratégia 2: sem Referer
         Log.d(tag, "Estratégia 2: redirect sem Referer")
         tryFetchWithHeaders(url, referer, ua, withReferer = false)?.let {
             Log.d(tag, "  ✅ Estratégia 2 funcionou")
             return it
         }
 
-        // Estratégia 3: manual, sem seguir redirects
         Log.d(tag, "Estratégia 3: ler Location manualmente")
         readLocationManually(url, referer, ua)?.let {
             Log.d(tag, "  ✅ Estratégia 3 funcionou")
@@ -121,17 +109,14 @@ class UniversalExtractor(private val client: OkHttpClient) {
             Log.d(tag, "  status=${resp.code} ct=$contentType")
             Log.d(tag, "  finalUrl=${finalUrl.take(150)}")
 
-            // Se houve redirect para uma URL de vídeo, retorna
             if (finalUrl != url && isVideoUrl(finalUrl)) {
                 return finalUrl
             }
 
-            // Se a resposta é diretamente um vídeo (200 com content-type de vídeo)
             if (resp.isSuccessful && (contentType.contains("video") || contentType.contains("octet-stream"))) {
                 return finalUrl
             }
 
-            // Se o t_param.php retornou HTML, tenta extrair URL de vídeo de dentro
             if (resp.isSuccessful && contentType.contains("html")) {
                 val html = resp.body.string()
                 extractVideoUrlFromHtml(html)?.let {
@@ -177,7 +162,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
     }
 
     private fun extractVideoUrlFromHtml(html: String): String? {
-        // Regex para pegar URLs diretas
         val patterns = listOf(
             """(https?://[^\s"'<>]+googlevideo\.com[^\s"'<>]*)""".toRegex(),
             """(https?://[^\s"'<>]+\.mp4[^\s"'<>]*)""".toRegex(),
@@ -198,13 +182,11 @@ class UniversalExtractor(private val client: OkHttpClient) {
         return null
     }
 
-    private fun isVideoUrl(url: String): Boolean {
-        return url.contains("googlevideo.com") ||
-            url.contains("videoplayback") ||
-            url.contains(".mp4") ||
-            url.contains(".m3u8") ||
-            url.contains(".mpd")
-    }
+    private fun isVideoUrl(url: String): Boolean = url.contains("googlevideo.com") ||
+        url.contains("videoplayback") ||
+        url.contains(".mp4") ||
+        url.contains(".m3u8") ||
+        url.contains(".mpd")
 
     private fun detectQuality(url: String): String? = when {
         url.contains("itag=37") -> "1080p"
