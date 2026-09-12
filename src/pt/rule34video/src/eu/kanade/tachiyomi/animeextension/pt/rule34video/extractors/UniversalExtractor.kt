@@ -40,7 +40,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
         val videos = mutableListOf<Video>()
         Log.e(tag, "=== Iniciando extração | pageUrl=$pageUrl ===")
 
-        // 1: obfuscated
         obfuscatedRegex.find(html)?.let { match ->
             deobfuscate(match.groupValues[1])?.let { url ->
                 Log.e(tag, "[1] URL via obfuscated: $url")
@@ -48,7 +47,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
             } ?: Log.e(tag, "[1] Falhou ao desofuscar.")
         } ?: Log.e(tag, "[1] 'obfuscated' não encontrado.")
 
-        // 2: JSON-LD
         if (videos.isEmpty()) {
             jsonLdContentUrlRegex.find(html)?.groupValues?.getOrNull(1)?.let { raw ->
                 val url = raw.replace("\\/", "/").replace("\\u0026", "&")
@@ -59,7 +57,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
             }
         }
 
-        // 3: og:video
         if (videos.isEmpty()) {
             ogVideoRegex.find(html)?.groupValues?.getOrNull(1)?.let { url ->
                 if (url.startsWith("http")) {
@@ -69,12 +66,13 @@ class UniversalExtractor(private val client: OkHttpClient) {
             }
         }
 
-        // 4: iframes (Blogger)
         if (videos.isEmpty()) {
             val iframes = iframeRegex.findAll(html).map { it.groupValues[1] }.toList()
             Log.e(tag, "[4] ${iframes.size} iframes encontrados.")
             for (raw in iframes) {
-                if (raw.contains("shockedguard") || raw.contains("ads") || raw.contains("doubleclick")) continue
+                if (raw.contains("shockedguard") || raw.contains("ads") || raw.contains("doubleclick")) {
+                    continue
+                }
                 val fullUrl = normalizeIframeUrl(raw, pageUrl)
                 Log.e(tag, "[4] Testando iframe: $fullUrl")
 
@@ -91,11 +89,12 @@ class UniversalExtractor(private val client: OkHttpClient) {
                     }
                 }.onFailure { Log.e(tag, "[4a] Erro Blogger: ${it.message}") }
 
-                if (videos.isNotEmpty()) break
+                if (videos.isNotEmpty()) {
+                    break
+                }
             }
         }
 
-        // 5: mp4 direto
         if (videos.isEmpty()) {
             mp4Regex.findAll(html).forEach { m ->
                 val url = sanitize(m.value)
@@ -130,7 +129,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
             pickGoogleVideoHeaders(cleanUrl, pageUrl)
         } else {
             val h = siteHeaders(cleanUrl, pageUrl, baseHeaders)
-            val (u, code) = probeUrl(cleanUrl, h, pageUrl)
+            val (u, _) = probeUrl(cleanUrl, h, pageUrl)
             Triple(u, h, "site")
         }
 
@@ -141,9 +140,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
         return Video(finalUrl, q, finalUrl, finalHeaders)
     }
 
-    /**
-     * Testa 3 variantes de header para GoogleVideo e retorna a que responde 2xx.
-     */
     private fun pickGoogleVideoHeaders(url: String, pageUrl: String): Triple<String, Headers, String> {
         val variants = listOf(
             "blogger" to Headers.Builder()
@@ -171,9 +167,10 @@ class UniversalExtractor(private val client: OkHttpClient) {
         for ((name, h) in variants) {
             val (u, code) = probeUrl(url, h, pageUrl)
             Log.e(tag, "  variante=$name → status=$code")
-            if (code in 200..299) return Triple(u, h, name)
+            if (code in 200..299) {
+                return Triple(u, h, name)
+            }
         }
-        // Se nenhuma deu 2xx, devolve a primeira mesmo assim
         return Triple(url, variants.first().second, "blogger-fallback")
     }
 
@@ -201,10 +198,14 @@ class UniversalExtractor(private val client: OkHttpClient) {
                     Log.e(tag, "  hop#$hops → $code | ${currentUrl.take(100)}")
                     if (code in 300..399) {
                         val loc = resp.header("Location")
-                        if (loc.isNullOrBlank()) return currentUrl to code
-                        currentUrl = if (loc.startsWith("http")) loc
-                        else java.net.URI(currentUrl).resolve(loc).toString()
-                        // continua o loop
+                        if (loc.isNullOrBlank()) {
+                            return currentUrl to code
+                        }
+                        currentUrl = if (loc.startsWith("http")) {
+                            loc
+                        } else {
+                            java.net.URI(currentUrl).resolve(loc).toString()
+                        }
                     } else {
                         return currentUrl to code
                     }
@@ -225,8 +226,12 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 client.cookieJar.loadForRequest(httpUrl)
                     .joinToString("; ") { "${it.name}=${it.value}" }
                     .takeIf { it.isNotBlank() }
-            } else null
-        } catch (e: Exception) { null }
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
+        }
 
         return baseHeaders.newBuilder()
             .add("Accept", "*/*")
