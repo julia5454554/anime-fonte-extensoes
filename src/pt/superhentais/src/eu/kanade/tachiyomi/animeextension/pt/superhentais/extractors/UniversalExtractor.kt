@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.animeextension.pt.superhentais.extractors
 
 import android.util.Log
+import aniyomi.lib.bloggerextractor.BloggerExtractor
 import eu.kanade.tachiyomi.animesource.model.Video
-import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -10,191 +10,67 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     private val tag = "SuperHentais-Extractor"
 
-    private val uaMobile = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36"
+    private val bloggerExtractor by lazy { BloggerExtractor(client) }
+
     private val uaDesktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     fun videosFromUrl(pageUrl: String, iframeUrl: String): List<Video> {
-        Log.d(tag, "=== INÍCIO DA EXTRAÇÃO ===")
-        Log.d(tag, "Page URL: $pageUrl")
+        Log.d(tag, "=== INÍCIO ===")
         Log.d(tag, "Iframe URL: $iframeUrl")
 
-        val videos = mutableListOf<Video>()
-        val seen = mutableSetOf<String>()
+        // Passo 1: segue o redirect do t_param.php para descobrir a URL do Blogger
+        val bloggerUrl = resolveFinalUrl(iframeUrl, pageUrl)
+        Log.d(tag, "URL final (Blogger): $bloggerUrl")
 
-        val attempts = listOf(
-            "360p" to uaMobile,
-            "720p" to uaDesktop,
-        )
-
-        for ((fallbackLabel, ua) in attempts) {
-            Log.d(tag, "--- Tentativa com UA=$fallbackLabel ---")
-            val finalUrl = tryFetchVideoUrl(iframeUrl, pageUrl, ua)
-            if (finalUrl.isNullOrBlank()) {
-                Log.w(tag, "  → Nada retornado")
-                continue
-            }
-            if (!seen.add(finalUrl)) {
-                Log.d(tag, "  → URL duplicada, pulando")
-                continue
-            }
-
-            val realQuality = detectQuality(finalUrl) ?: fallbackLabel
-            val videoHeaders = Headers.Builder()
-                .add("User-Agent", ua)
-                .add("Accept", "*/*")
-                .add("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
-                .build()
-
-            videos.add(Video(finalUrl, realQuality, finalUrl, videoHeaders))
-            Log.d(tag, "  ✅ ADICIONADO: $realQuality → ${finalUrl.take(120)}...")
+        if (bloggerUrl.isNullOrBlank()) {
+            Log.e(tag, "Não foi possível resolver o redirect")
+            return emptyList()
         }
 
+        // Passo 2: usa BloggerExtractor para extrair os vídeos
+        val videos = try {
+            bloggerExtractor.videosFromUrl(bloggerUrl, pageUrl)
+        } catch (e: Exception) {
+            Log.e(tag, "Erro no BloggerExtractor: ${e.message}")
+            emptyList()
+        }
+
+        Log.d(tag, "BloggerExtractor retornou ${videos.size} vídeo(s)")
+
+        // Fallback: se o BloggerExtractor falhar, devolve a URL direta
         if (videos.isEmpty()) {
-            Log.w(tag, "⚠️ Nenhum redirect funcionou, usando iframe URL como fallback")
-            val videoHeaders = Headers.Builder()
-                .add("User-Agent", uaDesktop)
-                .add("Referer", pageUrl)
-                .add("Origin", "https://superhentais.com.br")
-                .add("Accept", "*/*")
-                .build()
-            videos.add(Video(iframeUrl, "Padrão", iframeUrl, videoHeaders))
+            Log.w(tag, "Fallback: entregando URL direta pro ExoPlayer")
+            return listOf(Video(bloggerUrl, "Padrão", bloggerUrl))
         }
 
-        Log.d(tag, "=== FIM: ${videos.size} vídeo(s) extraído(s) ===")
         return videos
     }
 
-    private fun tryFetchVideoUrl(url: String, referer: String, ua: String): String? {
-        Log.d(tag, "Estratégia 1: redirect com Referer")
-        tryFetchWithHeaders(url, referer, ua, withReferer = true)?.let {
-            Log.d(tag, "  ✅ Estratégia 1 funcionou")
-            return it
-        }
-
-        Log.d(tag, "Estratégia 2: redirect sem Referer")
-        tryFetchWithHeaders(url, referer, ua, withReferer = false)?.let {
-            Log.d(tag, "  ✅ Estratégia 2 funcionou")
-            return it
-        }
-
-        Log.d(tag, "Estratégia 3: ler Location manualmente")
-        readLocationManually(url, referer, ua)?.let {
-            Log.d(tag, "  ✅ Estratégia 3 funcionou")
-            return it
-        }
-
-        return null
-    }
-
-    private fun tryFetchWithHeaders(
-        url: String,
-        referer: String,
-        ua: String,
-        withReferer: Boolean,
-    ): String? = try {
-        val builder = Request.Builder()
-            .url(url)
-            .header("User-Agent", ua)
-            .header("Accept", "*/*")
-            .header("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
-
-        if (withReferer) {
-            builder.header("Referer", referer)
-            builder.header("Origin", "https://superhentais.com.br")
-        }
-
-        client.newCall(builder.build()).execute().use { resp ->
-            val finalUrl = resp.request.url.toString()
-            val contentType = resp.header("Content-Type") ?: "?"
-            Log.d(tag, "  status=${resp.code} ct=$contentType")
-            Log.d(tag, "  finalUrl=${finalUrl.take(150)}")
-
-            if (finalUrl != url && isVideoUrl(finalUrl)) {
-                return finalUrl
-            }
-
-            if (resp.isSuccessful && (contentType.contains("video") || contentType.contains("octet-stream"))) {
-                return finalUrl
-            }
-
-            if (resp.isSuccessful && contentType.contains("html")) {
-                val html = resp.body.string()
-                extractVideoUrlFromHtml(html)?.let {
-                    Log.d(tag, "  URL extraída do HTML: ${it.take(150)}")
-                    return it
-                }
-            }
-
-            null
-        }
-    } catch (e: Exception) {
-        Log.e(tag, "  Exceção: ${e.message}")
-        null
-    }
-
-    private fun readLocationManually(url: String, referer: String, ua: String): String? = try {
-        val noRedirect = client.newBuilder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
-
+    /**
+     * Segue o redirect 302 do t_param.php e retorna a URL final do googlevideo.com
+     */
+    private fun resolveFinalUrl(url: String, referer: String): String? = try {
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", ua)
+            .header("User-Agent", uaDesktop)
             .header("Referer", referer)
             .header("Origin", "https://superhentais.com.br")
             .header("Accept", "*/*")
             .build()
 
-        noRedirect.newCall(request).execute().use { resp ->
-            Log.d(tag, "  status=${resp.code}")
-            if (resp.isRedirect) {
-                val location = resp.header("Location")
-                Log.d(tag, "  Location=${location?.take(150)}")
-                location
+        client.newCall(request).execute().use { resp ->
+            val finalUrl = resp.request.url.toString()
+            Log.d(tag, "Status: ${resp.code}, Content-Type: ${resp.header("Content-Type")}")
+            Log.d(tag, "URL final: ${finalUrl.take(200)}")
+
+            if (resp.isSuccessful && finalUrl != url) {
+                finalUrl
             } else {
                 null
             }
         }
     } catch (e: Exception) {
-        Log.e(tag, "  Exceção: ${e.message}")
+        Log.e(tag, "Erro ao seguir redirect: ${e.message}")
         null
-    }
-
-    private fun extractVideoUrlFromHtml(html: String): String? {
-        val patterns = listOf(
-            """(https?://[^\s"'<>]+googlevideo\.com[^\s"'<>]*)""".toRegex(),
-            """(https?://[^\s"'<>]+\.mp4[^\s"'<>]*)""".toRegex(),
-            """(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""".toRegex(),
-            """"file"\s*:\s*"([^"]+)"""".toRegex(),
-            """src\s*:\s*["']([^"']+)["']""".toRegex(),
-            """<source[^>]+src=["']([^"']+)["']""".toRegex(),
-        )
-
-        for (regex in patterns) {
-            val match = regex.find(html) ?: continue
-            val raw = match.groupValues.getOrNull(1) ?: continue
-            val clean = raw.replace("\\/", "/").trim()
-            if (clean.startsWith("http") && isVideoUrl(clean)) {
-                return clean
-            }
-        }
-        return null
-    }
-
-    private fun isVideoUrl(url: String): Boolean = url.contains("googlevideo.com") ||
-        url.contains("videoplayback") ||
-        url.contains(".mp4") ||
-        url.contains(".m3u8") ||
-        url.contains(".mpd")
-
-    private fun detectQuality(url: String): String? = when {
-        url.contains("itag=37") -> "1080p"
-        url.contains("itag=22") -> "720p"
-        url.contains("itag=59") -> "480p"
-        url.contains("itag=18") -> "360p"
-        url.contains("itag=17") -> "144p"
-        url.contains("googlevideo") -> "Blogger"
-        else -> null
     }
 }
