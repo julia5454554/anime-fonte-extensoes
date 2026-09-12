@@ -24,7 +24,7 @@ class Rule34Video : AnimeHttpSource() {
     private val userAgent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    private val extractor by lazy { UniversalExtractor() }
+    private val extractor by lazy { UniversalExtractor(client) }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", userAgent)
@@ -101,7 +101,6 @@ class Rule34Video : AnimeHttpSource() {
 
     // ==================== EPISÓDIOS ====================
 
-    // Site = 1 vídeo por página. Retornamos 1 episódio só.
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
         val episode = SEpisode.create().apply {
