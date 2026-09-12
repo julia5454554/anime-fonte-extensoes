@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.pt.cosxplay
 
+import aniyomi.lib.m3u8server.M3u8Integration
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -7,7 +8,6 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
-import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -23,6 +23,8 @@ class CosXplay : ParsedAnimeHttpSource() {
     private val chromeUa =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+    private val m3u8Integration by lazy { M3u8Integration(client) }
 
     // ==================== Populares ====================
 
@@ -86,17 +88,25 @@ class CosXplay : ParsedAnimeHttpSource() {
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create()
 
     // ==================== Vídeos ====================
+    // O CDN nosofiles.com exige Referer/Origin, mas o mpv ignora esses headers.
+    // Solução: passar a lista por M3u8Integration, que expõe URLs locais (proxy)
+    // e injeta os headers originais no request real ao CDN.
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val pageUrl = response.request.url.toString()
-        return document.select("video source").mapNotNull { source ->
+        val videoHeaders = headers.newBuilder()
+            .set("User-Agent", chromeUa)
+            .set("Referer", pageUrl)
+            .set("Origin", baseUrl)
+            .build()
+        val videos = document.select("video source").mapNotNull { source ->
             val src = source.attr("src")
             if (src.isEmpty()) return@mapNotNull null
             val quality = source.attr("title").ifBlank { "Vídeo" }
-            val workingHeaders = pickBestHeaders(src, pageUrl)
-            Video(src, quality, src, workingHeaders)
+            Video(src, quality, src, videoHeaders)
         }
+        return m3u8Integration.processVideoList(videos)
     }
 
     override fun videoListSelector(): String = "video source"
@@ -106,52 +116,6 @@ class CosXplay : ParsedAnimeHttpSource() {
     override fun videoUrlParse(document: Document): String = ""
 
     // ==================== Helpers ====================
-
-    private fun pickBestHeaders(url: String, refererUrl: String): Headers {
-        val variants = listOf(
-            headers.newBuilder()
-                .set("User-Agent", chromeUa)
-                .set("Referer", refererUrl)
-                .set("Origin", baseUrl)
-                .set("Accept", "*/*")
-                .set("Range", "bytes=0-")
-                .build(),
-            headers.newBuilder()
-                .set("User-Agent", chromeUa)
-                .set("Referer", "$baseUrl/")
-                .set("Origin", baseUrl)
-                .set("Range", "bytes=0-")
-                .build(),
-            headers.newBuilder()
-                .set("User-Agent", chromeUa)
-                .set("Referer", refererUrl)
-                .build(),
-            headers.newBuilder()
-                .set("User-Agent", chromeUa)
-                .set("Referer", "$baseUrl/")
-                .build(),
-            headers.newBuilder()
-                .set("User-Agent", chromeUa)
-                .build(),
-        )
-        for (h in variants) {
-            try {
-                val probe = Request.Builder()
-                    .url(url)
-                    .headers(h)
-                    .get()
-                    .header("Range", "bytes=0-1")
-                    .build()
-                val resp = client.newCall(probe).execute()
-                val code = resp.code
-                resp.close()
-                if (code in 200..299) return h
-            } catch (_: Exception) {
-                // tenta a próxima variante
-            }
-        }
-        return variants.first()
-    }
 
     private fun parseCard(element: Element): SAnime {
         val link = element.selectFirst("a.thumb")?.attr("href") ?: ""
