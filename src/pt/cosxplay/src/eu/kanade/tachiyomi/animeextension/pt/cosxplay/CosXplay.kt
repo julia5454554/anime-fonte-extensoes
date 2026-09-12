@@ -23,7 +23,7 @@ class CosXplay : ParsedAnimeHttpSource() {
     override val supportsLatest = true
 
     // Evita "Brotli decoder initialization failed" do Anikku: força gzip em vez de br.
-    override val headers: Headers = super.headers.newBuilder()
+    private val reqHeaders: Headers = headers.newBuilder()
         .set("Accept-Encoding", "gzip")
         .build()
 
@@ -37,7 +37,7 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     override fun popularAnimeRequest(page: Int): Request {
         val url = if (page == 1) "$baseUrl/" else "$baseUrl/page/$page/"
-        return GET(url, headers)
+        return GET(url, reqHeaders)
     }
 
     override fun popularAnimeFromElement(element: Element): SAnime = parseCard(element)
@@ -60,7 +60,7 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val url = if (page == 1) "$baseUrl/?s=$query" else "$baseUrl/page/$page/?s=$query"
-        return GET(url, headers)
+        return GET(url, reqHeaders)
     }
 
     override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
