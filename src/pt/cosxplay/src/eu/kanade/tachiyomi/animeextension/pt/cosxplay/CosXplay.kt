@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.pt.cosxplay
 
-import android.util.Base64
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -11,7 +10,6 @@ import eu.kanade.tachiyomi.util.asJsoup
 import fi.iki.elonen.NanoHTTPD
 import okhttp3.Request
 import okhttp3.Response
-import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -22,10 +20,6 @@ class CosXplay : ParsedAnimeHttpSource() {
     override val baseUrl = "https://cosxplay.com"
     override val lang = "pt"
     override val supportsLatest = true
-
-    private val chromeUa =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     private val proxyServer by lazy {
         ProxyServer(client).also { it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
@@ -93,33 +87,17 @@ class CosXplay : ParsedAnimeHttpSource() {
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create()
 
     // ==================== Vídeos ====================
-    // Os headers que funcionam no download (OkHttp) são serializados em base64
-    // e passados ao proxy via query string. O proxy usa exatamente eles.
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val pageUrl = response.request.url.toString()
         val port = proxyServer.listeningPort
-
-        val headerMap = mapOf(
-            "User-Agent" to chromeUa,
-            "Referer" to pageUrl,
-            "Origin" to baseUrl,
-            "Accept" to "*/*",
-            "Accept-Language" to "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-        )
-        val headersJson = JSONObject(headerMap as Map<*, *>).toString()
-        val headersB64 = Base64.encodeToString(
-            headersJson.toByteArray(),
-            Base64.URL_SAFE or Base64.NO_WRAP,
-        )
-
         return document.select("video source").mapNotNull { source ->
             val src = source.attr("src")
             if (src.isEmpty()) return@mapNotNull null
             val quality = source.attr("title").ifBlank { "Vídeo" }
+            // URL encode UMA vez — NanoHTTPD decodifica uma vez ao receber
             val encodedUrl = URLEncoder.encode(src, "UTF-8")
-            val localUrl = "http://127.0.0.1:$port/proxy?url=$encodedUrl&h=$headersB64"
+            val localUrl = "http://127.0.0.1:$port/proxy?url=$encodedUrl"
             Video(localUrl, quality, localUrl)
         }
     }
