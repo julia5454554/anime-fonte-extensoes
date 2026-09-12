@@ -53,30 +53,28 @@ class UniversalExtractor(private val client: OkHttpClient) {
         return emptyList()
     }
 
-    private fun extractMp4FromHtml(url: String, headers: Headers): List<Video> {
-        return try {
-            val request = Request.Builder().url(url).headers(headers).build()
-            val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: ""
+    private fun extractMp4FromHtml(url: String, headers: Headers): List<Video> = try {
+        val request = Request.Builder().url(url).headers(headers).build()
+        val response = client.newCall(request).execute()
+        val body = response.body?.string() ?: ""
 
-            // Regex para buscar streams do Blogger/Google Video no HTML
-            val mp4Regex = """https?://[^\s"'<>]+(?:\.mp4|googlevideo\.com/videoplayback)[^\s"'<>]*""".toRegex()
-            val matches = mp4Regex.findAll(body).map { it.value }.distinct().toList()
+        // Regex para buscar streams do Blogger/Google Video no HTML
+        val mp4Regex = """https?://[^\s"'<>]+(?:\.mp4|googlevideo\.com/videoplayback)[^\s"'<>]*""".toRegex()
+        val matches = mp4Regex.findAll(body).map { it.value }.distinct().toList()
 
-            matches.mapIndexed { index, videoUrl ->
-                Video(videoUrl, "Blogger Direct ${index + 1}", videoUrl, headers)
-            }
-        } catch (e: Exception) {
-            Log.e(tag, "Erro ao extrair HTML: ${e.message}")
-            emptyList()
+        matches.mapIndexed { index, videoUrl ->
+            Video(videoUrl, "Blogger Direct ${index + 1}", videoUrl, headers)
         }
+    } catch (e: Exception) {
+        Log.e(tag, "Erro ao extrair HTML: ${e.message}")
+        emptyList()
     }
 
     private fun isDirectVideoUrl(url: String): Boolean {
         val cleanUrl = url.lowercase()
-        return cleanUrl.contains(".mp4") || 
-               cleanUrl.contains(".m3u8") || 
-               cleanUrl.contains("googlevideo.com/videoplayback")
+        return cleanUrl.contains(".mp4") ||
+            cleanUrl.contains(".m3u8") ||
+            cleanUrl.contains("googlevideo.com/videoplayback")
     }
 
     private fun resolveRedirect(url: String, referer: String): String? {
