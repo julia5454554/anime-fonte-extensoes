@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.pt.cosxplay
 
+import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import okhttp3.Headers
 import okhttp3.OkHttpClient
@@ -29,17 +30,31 @@ class ProxyServer(private val client: OkHttpClient) : NanoHTTPD("127.0.0.1", 0) 
             .build()
 
         val reqBuilder = Request.Builder().url(targetUrl).headers(reqHeaders).get()
-        session.headers["range"]?.let { reqBuilder.header("Range", it) }
+        val rangeHeader = session.headers["range"]
+        if (rangeHeader != null) reqBuilder.header("Range", rangeHeader)
+
+        Log.d(TAG, "→ ${if (rangeHeader != null) "RANGE=$rangeHeader " else ""}$targetUrl")
 
         val upstream = try {
             client.newCall(reqBuilder.build()).execute()
         } catch (e: Exception) {
+            Log.e(TAG, "upstream exception", e)
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", e.message ?: "err")
         }
+
+        Log.d(TAG, "← ${upstream.code} (len=${upstream.header("Content-Length")}, range=${upstream.header("Content-Range")})")
+
+        if (upstream.code >= 400) {
+            val errMsg = "upstream ${upstream.code}"
+            upstream.close()
+            return newFixedLengthResponse(Response.Status.lookup(upstream.code) ?: Response.Status.INTERNAL_ERROR, "text/plain", errMsg)
+        }
+
         val body = upstream.body
             ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "no body")
-        val mime = upstream.header("Content-Type") ?: "application/octet-stream"
-        val status = Response.Status.lookup(upstream.code) ?: Response.Status.OK
+
+        val mime = upstream.header("Content-Type") ?: "video/mp4"
+        val status = if (upstream.code == 206) Response.Status.PARTIAL_CONTENT else Response.Status.OK
         val length = body.contentLength()
 
         val nano = if (length >= 0) {
@@ -47,18 +62,13 @@ class ProxyServer(private val client: OkHttpClient) : NanoHTTPD("127.0.0.1", 0) 
         } else {
             newChunkedResponse(status, mime, body.byteStream())
         }
-        upstream.headers.forEach { (name, value) ->
-            val lower = name.lowercase()
-            if (lower != "content-length" && lower != "transfer-encoding" &&
-                lower != "content-type" && lower != "connection"
-            ) {
-                nano.addHeader(name, value)
-            }
-        }
+        upstream.header("Content-Range")?.let { nano.addHeader("Content-Range", it) }
+        upstream.header("Accept-Ranges")?.let { nano.addHeader("Accept-Ranges", it) }
         return nano
     }
 
     companion object {
+        private const val TAG = "CosXplayProxy"
         const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
