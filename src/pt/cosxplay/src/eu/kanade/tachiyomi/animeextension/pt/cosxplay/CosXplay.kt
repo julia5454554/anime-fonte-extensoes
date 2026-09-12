@@ -7,9 +7,9 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
+import io.reactivex.Observable
 import okhttp3.Request
-import okhttp3.Response
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 class CosXplay : ParsedAnimeHttpSource() {
@@ -21,7 +21,7 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     private val universalExtractor by lazy { UniversalExtractor(client, headers) }
 
-    // =========================== Populares ===========================
+    // ==================== Populares ====================
 
     override fun popularAnimeSelector(): String = "article"
 
@@ -41,7 +41,7 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     override fun popularAnimeNextPageSelector(): String = "a.next.page-numbers"
 
-    // =========================== Recentes ===========================
+    // ==================== Recentes ====================
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
 
@@ -51,16 +51,12 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     override fun latestUpdatesNextPageSelector(): String = popularAnimeNextPageSelector()
 
-    // =========================== Busca ===========================
+    // ==================== Busca ====================
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val url = if (page == 1) {
-            "$baseUrl/?s=$query"
-        } else {
-            "$baseUrl/page/$page/?s=$query"
-        }
+        val url = if (page == 1) "$baseUrl/?s=$query" else "$baseUrl/page/$page/?s=$query"
         return GET(url, headers)
     }
 
@@ -68,10 +64,9 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     override fun searchAnimeNextPageSelector(): String = popularAnimeNextPageSelector()
 
-    // =========================== Detalhes ===========================
+    // ==================== Detalhes ====================
 
-    override fun animeDetailsParse(response: Response): SAnime {
-        val document = response.asJsoup()
+    override fun animeDetailsParse(document: Document): SAnime {
         return SAnime.create().apply {
             title = document.selectFirst("h1")?.text() ?: ""
             thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content") ?: ""
@@ -80,31 +75,50 @@ class CosXplay : ParsedAnimeHttpSource() {
         }
     }
 
-    // =========================== Episódios ===========================
+    // ==================== Episódios ====================
 
-    override fun episodeListParse(response: Response): List<SEpisode> {
-        val url = response.request.url.toString()
-        return listOf(
-            SEpisode.create().apply {
-                setUrlWithoutDomain(url)
-                name = "Vídeo"
-                episode_number = 1f
-            },
-        )
+    override fun fetchEpisodeList(anime: SAnime): Observable<List<SEpisode>> {
+        return Observable.fromCallable {
+            listOf(
+                SEpisode.create().apply {
+                    setUrlWithoutDomain(anime.url)
+                    name = "Vídeo"
+                    episode_number = 1f
+                },
+            )
+        }
     }
 
-    // =========================== Vídeos ===========================
+    override fun episodeListSelector(): String = "article"
 
-    override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl + episode.url, headers)
-
-    override fun videoListParse(response: Response): List<Video> {
-        val pageUrl = response.request.url.toString()
-        val id = pageUrl.trimEnd('/').substringAfterLast('/').substringBefore('-')
-        val embedUrl = "$baseUrl/embed/$id/"
-        return universalExtractor.videosFromUrl(embedUrl, pageUrl)
+    override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
+        setUrlWithoutDomain(element.selectFirst("a")?.attr("href") ?: "")
+        name = "Vídeo"
+        episode_number = 1f
     }
 
-    override fun List<Video>.sortByQuality(): List<Video> = sortedByDescending { extractResolution(it.quality) }
+    // ==================== Vídeos ====================
+
+    override fun fetchVideoList(episode: SEpisode): Observable<List<Video>> {
+        return Observable.fromCallable {
+            val pageUrl = baseUrl + episode.url
+            val id = pageUrl.trimEnd('/').substringAfterLast('/').substringBefore('-')
+            val embedUrl = "$baseUrl/embed/$id/"
+            universalExtractor.videosFromUrl(embedUrl, pageUrl)
+                .sortedByDescending { extractResolution(it.quality) }
+        }
+    }
+
+    override fun videoListSelector(): String = "video source"
+
+    override fun videoFromElement(element: Element): Video {
+        val src = element.attr("src")
+        val quality = element.attr("title").ifBlank { "Vídeo" }
+        return Video(src, quality, src)
+    }
+
+    override fun videoUrlParse(document: Document): String =
+        document.selectFirst("video source")?.attr("src") ?: ""
 
     private fun extractResolution(quality: String): Int = when {
         quality.contains("1080") -> 1080
