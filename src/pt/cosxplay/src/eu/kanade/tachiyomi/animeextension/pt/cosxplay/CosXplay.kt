@@ -87,8 +87,8 @@ class CosXplay : ParsedAnimeHttpSource() {
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create()
 
     // ==================== Vídeos ====================
-    // mpv ignora headers customizados → usa proxy local que injeta Referer/Origin/UA.
-    // Download continua usando a URL direta (funciona, pois OkHttp respeita headers).
+    // Aniyomi usa o 3º argumento (videoUrl) para reproduzir, então passamos
+    // a URL local do proxy nos DOIS campos para garantir que tudo passe por ele.
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
@@ -101,7 +101,7 @@ class CosXplay : ParsedAnimeHttpSource() {
             val quality = source.attr("title").ifBlank { "Vídeo" }
             val encodedUrl = URLEncoder.encode(src, "UTF-8")
             val localUrl = "http://127.0.0.1:$port/proxy?url=$encodedUrl&ref=$encodedRef"
-            Video(localUrl, quality, src)
+            Video(localUrl, quality, localUrl)
         }
     }
 
