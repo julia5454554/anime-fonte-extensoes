@@ -12,6 +12,10 @@ on:
       - 'src/pt/rule34video/**'
   workflow_dispatch:
 
+# ⬇️ NECESSÁRIO para o softprops/action-gh-release criar Releases
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
