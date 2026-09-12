@@ -64,7 +64,6 @@ class CosXplay : ParsedAnimeHttpSource() {
     }
 
     // ==================== Episódios ====================
-    // 1 episódio = própria página do post (que já contém o <video><source>)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val pageUrl = response.request.url.toString()
@@ -82,14 +81,20 @@ class CosXplay : ParsedAnimeHttpSource() {
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create()
 
     // ==================== Vídeos ====================
+    // CDN nosofiles.com exige Referer + Origin, senão devolve 403.
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
+        val referer = response.request.url.toString()
+        val videoHeaders = headers.newBuilder()
+            .set("Referer", referer)
+            .set("Origin", baseUrl)
+            .build()
         return document.select("video source").mapNotNull { source ->
             val src = source.attr("src")
             if (src.isEmpty()) return@mapNotNull null
             val quality = source.attr("title").ifBlank { "Vídeo" }
-            Video(src, quality, src)
+            Video(src, quality, src, videoHeaders)
         }
     }
 
