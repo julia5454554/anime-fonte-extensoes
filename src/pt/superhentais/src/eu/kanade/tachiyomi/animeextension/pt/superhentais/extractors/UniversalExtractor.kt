@@ -3,6 +3,8 @@ package eu.kanade.tachiyomi.animeextension.pt.superhentais.extractors
 import android.util.Log
 import aniyomi.lib.bloggerextractor.BloggerExtractor
 import eu.kanade.tachiyomi.animesource.model.Video
+import kotlinx.coroutines.runBlocking
+import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -16,23 +18,34 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     fun videosFromUrl(pageUrl: String, iframeUrl: String): List<Video> {
         Log.d(tag, "=== INÍCIO ===")
-        Log.d(tag, "Iframe URL: $iframeUrl")
+        Log.d(tag, "Iframe URL: ${iframeUrl.take(120)}...")
 
         // Passo 1: segue o redirect do t_param.php para descobrir a URL do Blogger
         val bloggerUrl = resolveFinalUrl(iframeUrl, pageUrl)
-        Log.d(tag, "URL final (Blogger): $bloggerUrl")
+        Log.d(tag, "URL final (Blogger): ${bloggerUrl?.take(200)}")
 
         if (bloggerUrl.isNullOrBlank()) {
             Log.e(tag, "Não foi possível resolver o redirect")
             return emptyList()
         }
 
-        // Passo 2: usa BloggerExtractor para extrair os vídeos
-        val videos = try {
-            bloggerExtractor.videosFromUrl(bloggerUrl, pageUrl)
-        } catch (e: Exception) {
-            Log.e(tag, "Erro no BloggerExtractor: ${e.message}")
-            emptyList()
+        // Headers necessários pro BloggerExtractor
+        val headers = Headers.Builder()
+            .add("User-Agent", uaDesktop)
+            .add("Referer", pageUrl)
+            .add("Origin", "https://superhentais.com.br")
+            .add("Accept", "*/*")
+            .add("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
+            .build()
+
+        // Passo 2: usa BloggerExtractor (função suspend → runBlocking)
+        val videos = runBlocking {
+            try {
+                bloggerExtractor.videosFromUrl(bloggerUrl, headers, "Blogger")
+            } catch (e: Exception) {
+                Log.e(tag, "Erro no BloggerExtractor: ${e.message}", e)
+                emptyList()
+            }
         }
 
         Log.d(tag, "BloggerExtractor retornou ${videos.size} vídeo(s)")
@@ -40,7 +53,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
         // Fallback: se o BloggerExtractor falhar, devolve a URL direta
         if (videos.isEmpty()) {
             Log.w(tag, "Fallback: entregando URL direta pro ExoPlayer")
-            return listOf(Video(bloggerUrl, "Padrão", bloggerUrl))
+            return listOf(Video(bloggerUrl, "Padrão", bloggerUrl, headers))
         }
 
         return videos
@@ -61,7 +74,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
         client.newCall(request).execute().use { resp ->
             val finalUrl = resp.request.url.toString()
             Log.d(tag, "Status: ${resp.code}, Content-Type: ${resp.header("Content-Type")}")
-            Log.d(tag, "URL final: ${finalUrl.take(200)}")
+            Log.d(tag, "URL final completa: ${finalUrl.take(250)}")
 
             if (resp.isSuccessful && finalUrl != url) {
                 finalUrl
