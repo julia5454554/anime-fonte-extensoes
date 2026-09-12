@@ -6,7 +6,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import okhttp3.Headers
 import java.net.URLDecoder
 
-class Rule34VideoExtractor {
+class UniversalExtractor {
 
     private val tag = "Rule34Video-Extractor"
 
