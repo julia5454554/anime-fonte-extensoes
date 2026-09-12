@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -18,6 +19,10 @@ class CosXplay : ParsedAnimeHttpSource() {
     override val baseUrl = "https://cosxplay.com"
     override val lang = "pt"
     override val supportsLatest = true
+
+    private val chromeUa =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     // ==================== Populares ====================
 
@@ -81,15 +86,10 @@ class CosXplay : ParsedAnimeHttpSource() {
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create()
 
     // ==================== Vídeos ====================
-    // CDN nosofiles.com exige Referer + Origin, senão devolve 403.
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val referer = response.request.url.toString()
-        val videoHeaders = headers.newBuilder()
-            .set("Referer", referer)
-            .set("Origin", baseUrl)
-            .build()
+        val videoHeaders = buildVideoHeaders()
         return document.select("video source").mapNotNull { source ->
             val src = source.attr("src")
             if (src.isEmpty()) return@mapNotNull null
@@ -105,6 +105,17 @@ class CosXplay : ParsedAnimeHttpSource() {
     override fun videoUrlParse(document: Document): String = ""
 
     // ==================== Helpers ====================
+
+    private fun buildVideoHeaders(): Headers = headers.newBuilder()
+        .set("User-Agent", chromeUa)
+        .set("Accept", "*/*")
+        .set("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
+        .set("Origin", baseUrl)
+        .set("Referer", "$baseUrl/")
+        .set("Sec-Fetch-Dest", "video")
+        .set("Sec-Fetch-Mode", "no-cors")
+        .set("Sec-Fetch-Site", "cross-site")
+        .build()
 
     private fun parseCard(element: Element): SAnime {
         val link = element.selectFirst("a.thumb")?.attr("href") ?: ""
