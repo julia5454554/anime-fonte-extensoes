@@ -62,12 +62,12 @@ class CosXplay : ParsedAnimeHttpSource() {
     }
 
     // ==================== Episódios ====================
+    // Extrai o ID do post direto do atributo id="post-76856" do <article>.
 
-    override fun episodeListSelector(): String = "meta[property=og:url]"
+    override fun episodeListSelector(): String = "article.post"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
-        val pageUrl = element.attr("content")
-        val id = pageUrl.trimEnd('/').substringAfterLast('/').substringBefore('-')
+        val id = element.id().removePrefix("post-")
         setUrlWithoutDomain("/embed/$id/")
         name = "Vídeo"
         episode_number = 1f
