@@ -1,142 +1,77 @@
-package eu.kanade.tachiyomi.animeextension.pt.superhentais.extractors
+package eu.kanade.tachiyomi.animeextension.pt.animeq.extractors
 
 import android.util.Log
-import aniyomi.lib.bloggerextractor.BloggerExtractor
+import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.model.Video
-import kotlinx.coroutines.runBlocking
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.util.Locale
 
 class UniversalExtractor(private val client: OkHttpClient) {
+    private val tag by lazy { javaClass.simpleName }
 
-    private val tag = "SuperHentais-Extractor"
+    fun videosFromUrl(origRequestUrl: String, origRequestHeader: Headers, name: String?): List<Video> {
+        Log.d(tag, "Fetching videos from: $origRequestUrl")
 
-    private val bloggerExtractor by lazy { BloggerExtractor(client) }
+        val host = origRequestUrl
+            .substringAfter("://")
+            .removePrefix("www.")
+            .substringBefore(".")
+            .proper()
+        val prefix = name ?: host
 
-    private val uaDesktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-    fun videosFromUrl(pageUrl: String, iframeUrl: String): List<Video> {
-        Log.e(tag, "=== INÍCIO ===")
-        Log.e(tag, "Page URL: $pageUrl")
-        Log.e(tag, "Iframe URL: ${iframeUrl.take(200)}")
-
-        val headers = Headers.Builder()
-            .add("User-Agent", uaDesktop)
-            .add("Referer", pageUrl)
-            .add("Origin", "https://superhentais.com.br")
-            .add("Accept", "*/*")
-            .add("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
+        // Fetch the page HTML
+        val request = Request.Builder()
+            .url(origRequestUrl)
+            .headers(origRequestHeader)
             .build()
 
-        // Estratégia 1: passar a URL do iframe DIRETO pro BloggerExtractor
-        Log.e(tag, "Estratégia 1: passar iframeUrl direto pro BloggerExtractor")
-        val videos1 = runBlocking {
-            try {
-                bloggerExtractor.videosFromUrl(iframeUrl, headers, "Blogger")
-            } catch (e: Exception) {
-                Log.e(tag, "Estratégia 1 falhou: ${e.message}")
-                emptyList()
-            }
-        }
-        Log.e(tag, "Estratégia 1 retornou ${videos1.size} vídeo(s)")
-        if (videos1.isNotEmpty()) {
-            videos1.forEach { Log.e(tag, "  → ${it.quality} | ${it.url.take(120)}") }
-            return videos1
+        val html = runCatching {
+            client.newCall(request).execute().use { it.body.string() }
+        }.getOrElse {
+            Log.e(tag, "Failed to fetch page: ${it.message}")
+            return emptyList()
         }
 
-        // Estratégia 2: resolver o redirect manualmente e passar pro BloggerExtractor
-        Log.e(tag, "Estratégia 2: resolver redirect manualmente")
-        val finalUrl = resolveRedirect(iframeUrl, pageUrl)
-        Log.e(tag, "URL final após redirect: ${finalUrl?.take(200)}")
+        // Extract the video URL from: var jw = {"file":"<URL>"
+        val videoUrl = JW_FILE_REGEX.find(html)?.groupValues?.get(1)
+            ?.replace("\\/", "/")
 
-        if (!finalUrl.isNullOrBlank()) {
-            val videos2 = runBlocking {
-                try {
-                    bloggerExtractor.videosFromUrl(finalUrl, headers, "Blogger")
-                } catch (e: Exception) {
-                    Log.e(tag, "Estratégia 2 falhou: ${e.message}")
-                    emptyList()
-                }
-            }
-            Log.e(tag, "Estratégia 2 retornou ${videos2.size} vídeo(s)")
-            if (videos2.isNotEmpty()) {
-                videos2.forEach { Log.e(tag, "  → ${it.quality} | ${it.url.take(120)}") }
-                return videos2
-            }
-
-            // Fallback final: entregar a URL final direto pro ExoPlayer
-            Log.e(tag, "Fallback: entregar URL final direto")
-            return listOf(Video(finalUrl, "Padrão", finalUrl, headers))
+        if (videoUrl.isNullOrBlank()) {
+            Log.e(tag, "Could not find video URL in page")
+            return emptyList()
         }
 
-        Log.e(tag, "=== FIM: NENHUM VÍDEO ENCONTRADO ===")
-        return emptyList()
+        Log.d(tag, "Found video URL: $videoUrl")
+
+        val playlistUtils by lazy { PlaylistUtils(client, origRequestHeader) }
+
+        return when {
+            "m3u8" in videoUrl -> {
+                Log.d(tag, "m3u8 URL: $videoUrl")
+                playlistUtils.extractFromHls(videoUrl, origRequestUrl, videoNameGen = { "$prefix: $it" })
+            }
+            "mpd" in videoUrl -> {
+                Log.d(tag, "mpd URL: $videoUrl")
+                playlistUtils.extractFromDash(videoUrl, { "$prefix: $it" }, referer = origRequestUrl)
+            }
+            "mp4" in videoUrl -> {
+                Log.d(tag, "mp4 URL: $videoUrl")
+                Video(videoUrl, "$prefix: MP4", videoUrl, Headers.headersOf("referer", origRequestUrl)).let(::listOf)
+            }
+            else -> {
+                Log.d(tag, "Unknown format, trying as direct URL: $videoUrl")
+                Video(videoUrl, "$prefix: Video", videoUrl, Headers.headersOf("referer", origRequestUrl)).let(::listOf)
+            }
+        }
     }
 
-    /**
-     * Segue redirects manualmente lendo o header Location em cada passo.
-     */
-    private fun resolveRedirect(url: String, referer: String): String? {
-        return try {
-            val noRedirect = client.newBuilder()
-                .followRedirects(false)
-                .followSslRedirects(false)
-                .build()
+    private fun String.proper(): String = this.replaceFirstChar {
+        if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+    }
 
-            var currentUrl = url
-            var hops = 0
-
-            while (hops < 5) {
-                hops++
-                Log.e(tag, "  Hop $hops: ${currentUrl.take(150)}")
-
-                val request = Request.Builder()
-                    .url(currentUrl)
-                    .header("User-Agent", uaDesktop)
-                    .header("Referer", referer)
-                    .header("Origin", "https://superhentais.com.br")
-                    .header("Accept", "*/*")
-                    .build()
-
-                val resp = noRedirect.newCall(request).execute()
-                try {
-                    Log.e(tag, "  → status=${resp.code} ct=${resp.header("Content-Type")}")
-
-                    if (resp.isRedirect) {
-                        val location = resp.header("Location")
-                        Log.e(tag, "  → Location: ${location?.take(200)}")
-                        if (location.isNullOrBlank()) return currentUrl
-
-                        currentUrl = try {
-                            if (location.startsWith("http")) {
-                                location
-                            } else {
-                                java.net.URI(currentUrl).resolve(location).toString()
-                            }
-                        } catch (e: Exception) {
-                            Log.e(tag, "  Erro ao resolver URL relativa: ${e.message}")
-                            location
-                        }
-                        continue
-                    }
-
-                    val ct = resp.header("Content-Type") ?: ""
-                    if (ct.contains("video") || ct.contains("octet-stream")) {
-                        Log.e(tag, "  → Content-Type de vídeo, retornando URL atual")
-                        return currentUrl
-                    }
-
-                    return currentUrl
-                } finally {
-                    resp.close()
-                }
-            }
-
-            currentUrl
-        } catch (e: Exception) {
-            Log.e(tag, "  Exceção ao resolver redirect: ${e.message}")
-            null
-        }
+    companion object {
+        private val JW_FILE_REGEX = Regex("""var\s+jw\s*=\s*\{["\s]*file["\s]*:\s*"([^"]+)"""")
     }
 }
