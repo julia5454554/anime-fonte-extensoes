@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import kotlinx.coroutines.runBlocking
 import okhttp3.Headers
 import okhttp3.OkHttpClient
+import okhttp3.Request
 
 class UniversalExtractor(private val client: OkHttpClient) {
 
@@ -29,7 +30,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
             .build()
 
         // Estratégia 1: passar a URL do iframe DIRETO pro BloggerExtractor
-        // (o BloggerExtractor sabe lidar com redirects internamente)
         Log.e(tag, "Estratégia 1: passar iframeUrl direto pro BloggerExtractor")
         val videos1 = runBlocking {
             try {
@@ -76,7 +76,6 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     /**
      * Segue redirects manualmente lendo o header Location em cada passo.
-     * Retorna a URL final (do googlevideo).
      */
     private fun resolveRedirect(url: String, referer: String): String? {
         return try {
@@ -92,7 +91,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
                 hops++
                 Log.e(tag, "  Hop $hops: ${currentUrl.take(150)}")
 
-                val request = okhttp3.Request.Builder()
+                val request = Request.Builder()
                     .url(currentUrl)
                     .header("User-Agent", uaDesktop)
                     .header("Referer", referer)
@@ -109,24 +108,25 @@ class UniversalExtractor(private val client: OkHttpClient) {
                         Log.e(tag, "  → Location: ${location?.take(200)}")
                         if (location.isNullOrBlank()) return currentUrl
 
-                        // Resolve URL relativa
-                        currentUrl = if (location.startsWith("http")) {
+                        currentUrl = try {
+                            if (location.startsWith("http")) {
+                                location
+                            } else {
+                                java.net.URI(currentUrl).resolve(location).toString()
+                            }
+                        } catch (e: Exception) {
+                            Log.e(tag, "  Erro ao resolver URL relativa: ${e.message}")
                             location
-                        } else {
-                            okhttp3.HttpUrl.parse(currentUrl)?.resolve(location)?.toString()
-                                ?: return currentUrl
                         }
                         continue
                     }
 
-                    // Não é redirect: verifica se é vídeo
                     val ct = resp.header("Content-Type") ?: ""
                     if (ct.contains("video") || ct.contains("octet-stream")) {
                         Log.e(tag, "  → Content-Type de vídeo, retornando URL atual")
                         return currentUrl
                     }
 
-                    // Retorna URL atual (pode ser HTML com player)
                     return currentUrl
                 } finally {
                     resp.close()
