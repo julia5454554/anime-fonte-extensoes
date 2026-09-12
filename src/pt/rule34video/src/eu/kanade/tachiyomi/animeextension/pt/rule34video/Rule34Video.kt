@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.pt.rule34video
 
-import eu.kanade.tachiyomi.animeextension.pt.rule34video.extractors.Rule34VideoExtractor
+import eu.kanade.tachiyomi.animeextension.pt.rule34video.extractors.UniversalExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -24,7 +24,7 @@ class Rule34Video : AnimeHttpSource() {
     private val userAgent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    private val extractor by lazy { Rule34VideoExtractor() }
+    private val extractor by lazy { UniversalExtractor() }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", userAgent)
