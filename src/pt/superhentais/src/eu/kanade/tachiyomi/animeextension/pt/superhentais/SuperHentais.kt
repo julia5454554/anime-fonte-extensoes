@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.pt.superhentais
 
+import eu.kanade.tachiyomi.animeextension.pt.superhentais.extractors.UniversalExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -8,13 +9,10 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 class SuperHentais : AnimeHttpSource() {
 
@@ -23,13 +21,9 @@ class SuperHentais : AnimeHttpSource() {
     override val lang = "pt"
     override val supportsLatest = true
 
-    // ==================== USER-AGENTS ====================
-
     private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    private val uaDesktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-    private val uaMobile = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36"
+    private val extractor by lazy { UniversalExtractor(client) }
 
     override fun headersBuilder() = super.headersBuilder()
         .add("User-Agent", userAgent)
@@ -61,14 +55,20 @@ class SuperHentais : AnimeHttpSource() {
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
     private fun animeFromElement(element: Element): SAnime? {
-        val linkElement = element.selectFirst("a[itemprop=url]") ?: return null
+        val linkElement = element.selectFirst("a[itemprop=url], h2.grid_title a, h2 a") ?: return null
         val href = linkElement.attr("href")
         if (href.isBlank()) return null
 
-        val title = element.selectFirst("h2.grid_title a")?.text()?.trim()
+        val title = element.selectFirst("h2.grid_title a, h2 a")?.text()?.trim()
             ?: linkElement.attr("title").trim()
+            ?: element.selectFirst("h2, h3")?.text()?.trim()
+            ?: ""
 
-        val imageUrl = element.selectFirst("img")?.attr("abs:src") ?: ""
+        if (title.isBlank()) return null
+
+        val imageUrl = element.selectFirst("img")?.let { img ->
+            img.attr("abs:src").ifBlank { img.attr("abs:data-src") }
+        } ?: ""
 
         return SAnime.create().apply {
             setUrlWithoutDomain(href)
@@ -152,98 +152,48 @@ class SuperHentais : AnimeHttpSource() {
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val videoList = mutableListOf<Video>()
         val pageUrl = response.request.url.toString()
+        val videoList = mutableListOf<Video>()
 
-        val noRedirectClient = client.newBuilder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
-
-        // -------- ESTRATÉGIA PRINCIPAL: iframe t_param.php do SuperHentais --------
-        document.select("iframe[src]").forEach { iframe ->
-            val src = iframe.attr("abs:src")
-            if (src.isBlank()) return@forEach
-
-            if (src.contains("t_param.php") || src.contains("video-play.mp4")) {
-                val attempts = listOf(
-                    QualityAttempt("360p", uaMobile),
-                    QualityAttempt("720p", uaDesktop),
-                )
-                val seenUrls = mutableSetOf<String>()
-
-                attempts.forEach { attempt ->
-                    val directUrl = resolveRedirect(
-                        noRedirectClient = noRedirectClient,
-                        url = src,
-                        referer = pageUrl,
-                        userAgent = attempt.userAgent,
-                    )
-                    if (!directUrl.isNullOrBlank() && seenUrls.add(directUrl)) {
-                        val vHeaders = headersBuilder()
-                            .add("User-Agent", attempt.userAgent)
-                            .add("Referer", pageUrl)
-                            .add("Origin", baseUrl)
-                            .add("Accept", "*/*")
-                            .add("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
-                            .build()
-                        videoList.add(Video(directUrl, attempt.label, directUrl, vHeaders))
-                    }
-                }
-
-                if (videoList.isEmpty()) {
-                    val vHeaders = headersBuilder()
-                        .add("Referer", pageUrl)
-                        .add("Origin", baseUrl)
-                        .add("Accept", "*/*")
-                        .build()
-                    videoList.add(Video(src, "Padrão", src, vHeaders))
-                }
-            } else if (src.contains("embed") || src.contains("player") || src.contains("/e/")) {
-                try {
-                    val iframeResponse = client.newCall(GET(src, headers)).execute()
-                    val iframeDoc = iframeResponse.asJsoup()
-                    iframeDoc.select("video source, video[src]").forEach { el ->
-                        val url = el.attr("abs:src").ifBlank { el.attr("abs:data-src") }
-                        if (url.isNotBlank() && videoList.none { it.url == url }) {
-                            videoList.add(createVideo(url, "Embed", pageUrl))
-                        }
-                    }
-                    val iframeHtml = iframeDoc.html()
-                    val regex = """(https?://[^\s"']+\.(?:m3u8|mp4)[^\s"']*)""".toRegex()
-                    regex.findAll(iframeHtml).forEach { match ->
-                        val url = match.value
-                        if (videoList.none { it.url == url }) {
-                            videoList.add(createVideo(url, "Embed", pageUrl))
-                        }
-                    }
-                } catch (_: Exception) {
-                    // ignora
-                }
+        // -------- Estratégia principal: iframe t_param.php --------
+        val iframe = document.selectFirst(
+            "iframe[src*=t_param.php], iframe[src*=video-play.mp4], #playVideo iframe",
+        )
+        if (iframe != null) {
+            val iframeUrl = iframe.attr("abs:src")
+            if (iframeUrl.isNotBlank()) {
+                videoList.addAll(extractor.videosFromUrl(pageUrl, iframeUrl))
             }
         }
 
-        // -------- Fallback 1: tags <video>/<source> soltas --------
+        // -------- Fallback: tags <video>/<source> soltas --------
         document.select("video source, video[src]").forEach { element ->
             val url = element.attr("abs:src").ifBlank { element.attr("abs:data-src") }
             if (url.isNotBlank() && (url.contains(".mp4") || url.contains(".m3u8"))) {
                 if (videoList.none { it.url == url }) {
-                    videoList.add(createVideo(url, "Vídeo", pageUrl))
+                    videoList.add(createDirectVideo(url, "Vídeo"))
                 }
             }
         }
 
-        // -------- Fallback 2: regex em scripts --------
+        // -------- Fallback: regex em scripts --------
         val scriptContent = document.select("script").html()
         val urlRegex = """(https?://[^\s"']+\.(?:m3u8|mp4)[^\s"']*)""".toRegex()
         urlRegex.findAll(scriptContent).forEach { match ->
             val url = match.value
             if (videoList.none { it.url == url }) {
-                videoList.add(createVideo(url, "Vídeo", pageUrl))
+                videoList.add(createDirectVideo(url, "Vídeo"))
             }
         }
 
         return videoList
+    }
+
+    private fun createDirectVideo(url: String, quality: String): Video {
+        val vHeaders = headersBuilder()
+            .add("Accept", "*/*")
+            .build()
+        return Video(url, quality, url, vHeaders)
     }
 
     // ==================== BUSCA ====================
@@ -258,51 +208,58 @@ class SuperHentais : AnimeHttpSource() {
         return GET(url, headers)
     }
 
-    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val document = response.asJsoup()
 
-    // ==================== HELPERS ====================
+        // 1) Tenta template da listagem
+        var animeList = document.select("article.box_view.list").mapNotNull { animeFromElement(it) }
 
-    private data class QualityAttempt(val label: String, val userAgent: String)
+        // 2) Tenta article genérico
+        if (animeList.isEmpty()) {
+            animeList = document.select("article").mapNotNull { animeFromElement(it) }
+        }
 
-    private fun resolveRedirect(
-        noRedirectClient: OkHttpClient,
-        url: String,
-        referer: String,
-        userAgent: String,
-    ): String? = try {
-        val request = Request.Builder()
-            .url(url)
-            .header("User-Agent", userAgent)
-            .header("Referer", referer)
-            .header("Origin", baseUrl)
-            .header("Accept", "*/*")
-            .header("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
-            .build()
-
-        noRedirectClient.newCall(request).execute().use { resp ->
-            if (resp.isRedirect) {
-                resp.header("Location")
-            } else {
-                null
+        // 3) Tenta div.grid_box
+        if (animeList.isEmpty()) {
+            animeList = document.select("div.grid_box").mapNotNull { element ->
+                animeFromElement(element.parent() ?: element)
             }
         }
-    } catch (_: Exception) {
-        null
-    }
 
-    private fun createVideo(url: String, quality: String, pageUrl: String): Video {
-        val videoHeaders = headersBuilder()
-            .add("Referer", pageUrl)
-            .add("Origin", baseUrl)
-            .add("Accept", "*/*")
-            .build()
-        return Video(url, quality, url, videoHeaders)
-    }
+        // 4) FALLBACK NUCLEAR: qualquer <a href*='/anime-hentai/'>
+        if (animeList.isEmpty()) {
+            val seen = mutableSetOf<String>()
+            animeList = document.select("a[href*='/anime-hentai/']")
+                .mapNotNull { link ->
+                    val href = link.attr("abs:href")
+                    if (href.isBlank() ||
+                        !href.endsWith("/") ||
+                        href.contains("/category/") ||
+                        href.contains("/tag/") ||
+                        href.contains("/lista-de-hentais/")
+                    ) {
+                        return@mapNotNull null
+                    }
 
-    private fun parseDate(dateStr: String): Long = try {
-        val format = SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR"))
-        format.parse(dateStr)?.time ?: 0L
-    } catch (_: Exception) {
-        0L
+                    if (!seen.add(href)) return@mapNotNull null
+
+                    val title = link.text().trim()
+                        .ifBlank { link.attr("title").trim() }
+                        .ifBlank { return@mapNotNull null }
+
+                    val imageUrl = link.selectFirst("img")?.let { img ->
+                        img.attr("abs:src").ifBlank { img.attr("abs:data-src") }
+                    } ?: ""
+
+                    SAnime.create().apply {
+                        setUrlWithoutDomain(href)
+                        this.title = title
+                        this.thumbnail_url = imageUrl
+                    }
+                }
+        }
+
+        val hasNextPage = document.selectFirst("a.next.page-numbers") != null
+        return AnimesPage(animeList, hasNextPage)
     }
 }
