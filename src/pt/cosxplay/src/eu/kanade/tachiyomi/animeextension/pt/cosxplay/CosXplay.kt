@@ -66,27 +66,23 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     // ==================== Detalhes ====================
 
-    override fun animeDetailsParse(document: Document): SAnime {
-        return SAnime.create().apply {
-            title = document.selectFirst("h1")?.text() ?: ""
-            thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content") ?: ""
-            description = document.selectFirst("meta[property=og:description]")?.attr("content") ?: ""
-            genre = document.select("a[rel=tag]").joinToString { it.text() }
-        }
+    override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
+        title = document.selectFirst("h1")?.text() ?: ""
+        thumbnail_url = document.selectFirst("meta[property=og:image]")?.attr("content") ?: ""
+        description = document.selectFirst("meta[property=og:description]")?.attr("content") ?: ""
+        genre = document.select("a[rel=tag]").joinToString { it.text() }
     }
 
     // ==================== Episódios ====================
 
-    override fun fetchEpisodeList(anime: SAnime): Observable<List<SEpisode>> {
-        return Observable.fromCallable {
-            listOf(
-                SEpisode.create().apply {
-                    setUrlWithoutDomain(anime.url)
-                    name = "Vídeo"
-                    episode_number = 1f
-                },
-            )
-        }
+    override fun fetchEpisodeList(anime: SAnime): Observable<List<SEpisode>> = Observable.fromCallable {
+        listOf(
+            SEpisode.create().apply {
+                setUrlWithoutDomain(anime.url)
+                name = "Vídeo"
+                episode_number = 1f
+            },
+        )
     }
 
     override fun episodeListSelector(): String = "article"
@@ -99,14 +95,11 @@ class CosXplay : ParsedAnimeHttpSource() {
 
     // ==================== Vídeos ====================
 
-    override fun fetchVideoList(episode: SEpisode): Observable<List<Video>> {
-        return Observable.fromCallable {
-            val pageUrl = baseUrl + episode.url
-            val id = pageUrl.trimEnd('/').substringAfterLast('/').substringBefore('-')
-            val embedUrl = "$baseUrl/embed/$id/"
-            universalExtractor.videosFromUrl(embedUrl, pageUrl)
-                .sortedByDescending { extractResolution(it.quality) }
-        }
+    override fun fetchVideoList(episode: SEpisode): Observable<List<Video>> = Observable.fromCallable {
+        val pageUrl = baseUrl + episode.url
+        val id = pageUrl.trimEnd('/').substringAfterLast('/').substringBefore('-')
+        val embedUrl = "$baseUrl/embed/$id/"
+        universalExtractor.videosFromUrl(embedUrl, pageUrl).sortedByDescending { extractResolution(it.quality) }
     }
 
     override fun videoListSelector(): String = "video source"
@@ -117,8 +110,7 @@ class CosXplay : ParsedAnimeHttpSource() {
         return Video(src, quality, src)
     }
 
-    override fun videoUrlParse(document: Document): String =
-        document.selectFirst("video source")?.attr("src") ?: ""
+    override fun videoUrlParse(document: Document): String = document.selectFirst("video source")?.attr("src") ?: ""
 
     private fun extractResolution(quality: String): Int = when {
         quality.contains("1080") -> 1080
