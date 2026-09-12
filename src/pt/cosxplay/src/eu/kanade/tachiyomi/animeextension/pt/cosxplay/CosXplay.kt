@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import fi.iki.elonen.NanoHTTPD
+import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -20,6 +21,11 @@ class CosXplay : ParsedAnimeHttpSource() {
     override val baseUrl = "https://cosxplay.com"
     override val lang = "pt"
     override val supportsLatest = true
+
+    // Evita "Brotli decoder initialization failed" do Anikku: força gzip em vez de br.
+    override val headers: Headers = super.headers.newBuilder()
+        .set("Accept-Encoding", "gzip")
+        .build()
 
     private val proxyServer by lazy {
         ProxyServer(client).also { it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
@@ -95,7 +101,6 @@ class CosXplay : ParsedAnimeHttpSource() {
             val src = source.attr("src")
             if (src.isEmpty()) return@mapNotNull null
             val quality = source.attr("title").ifBlank { "Vídeo" }
-            // URL encode UMA vez — NanoHTTPD decodifica uma vez ao receber
             val encodedUrl = URLEncoder.encode(src, "UTF-8")
             val localUrl = "http://127.0.0.1:$port/proxy?url=$encodedUrl"
             Video(localUrl, quality, localUrl)
