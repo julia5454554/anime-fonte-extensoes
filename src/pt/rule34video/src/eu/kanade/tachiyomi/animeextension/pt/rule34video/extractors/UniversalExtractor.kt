@@ -6,6 +6,7 @@ import aniyomi.lib.bloggerextractor.BloggerExtractor
 import eu.kanade.tachiyomi.animesource.model.Video
 import kotlinx.coroutines.runBlocking
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import java.net.URLDecoder
 
@@ -26,6 +27,9 @@ class UniversalExtractor(private val client: OkHttpClient) {
         """<meta[^>]+property=["']og:video(?::secure_url)?["'][^>]+content=["']([^"']+)["']""",
         RegexOption.IGNORE_CASE,
     )
+
+    // JSON-LD "contentUrl": "..."
+    private val jsonLdContentUrlRegex = Regex(""""contentUrl"\s*:\s*"([^"]+)"""", RegexOption.IGNORE_CASE)
 
     // <iframe src="...">
     private val iframeRegex = Regex(
@@ -48,52 +52,54 @@ class UniversalExtractor(private val client: OkHttpClient) {
             } ?: Log.e(tag, "[1] Falhou ao desofuscar.")
         } ?: Log.e(tag, "[1] Bloco 'obfuscated' não encontrado.")
 
-        // -------- Estratégia 2: meta og:video --------
+        // -------- Estratégia 2: JSON-LD contentUrl --------
+        if (videos.isEmpty()) {
+            jsonLdContentUrlRegex.find(html)?.groupValues?.getOrNull(1)?.let { raw ->
+                val url = raw.replace("\\/", "/").replace("\\u0026", "&")
+                if (url.startsWith("http")) {
+                    Log.e(tag, "[2] URL via JSON-LD contentUrl: $url")
+                    videos.add(buildVideo(url, pageUrl, baseHeaders))
+                }
+            } ?: Log.e(tag, "[2] Nenhum JSON-LD contentUrl encontrado.")
+        }
+
+        // -------- Estratégia 3: meta og:video --------
         if (videos.isEmpty()) {
             ogVideoRegex.find(html)?.groupValues?.getOrNull(1)?.let { url ->
                 if (url.isNotBlank() && url.startsWith("http")) {
-                    Log.e(tag, "[2] URL via og:video: $url")
+                    Log.e(tag, "[3] URL via og:video: $url")
                     videos.add(buildVideo(url, pageUrl, baseHeaders))
                 }
-            } ?: Log.e(tag, "[2] Nenhum og:video encontrado.")
+            } ?: Log.e(tag, "[3] Nenhum og:video encontrado.")
         }
 
-        // -------- Estratégia 3: iframes (Blogger, Streamtape, etc.) --------
+        // -------- Estratégia 4: iframes (Blogger, Streamtape, etc.) --------
         if (videos.isEmpty()) {
             val iframes = iframeRegex.findAll(html).map { it.groupValues[1] }.toList()
-            Log.e(tag, "[3] Encontrados ${iframes.size} iframes.")
+            Log.e(tag, "[4] Encontrados ${iframes.size} iframes.")
             for (raw in iframes) {
                 if (raw.contains("shockedguard") || raw.contains("ads") || raw.contains("doubleclick")) {
                     continue
                 }
                 val fullUrl = normalizeIframeUrl(raw, pageUrl)
-                Log.e(tag, "[3] Testando iframe: $fullUrl")
+                Log.e(tag, "[4] Testando iframe: $fullUrl")
 
                 runCatching {
                     val bloggerVideos = runBlocking {
                         bloggerExtractor.videosFromUrl(fullUrl, baseHeaders, "Blogger")
                     }
                     if (bloggerVideos.isNotEmpty()) {
-                        Log.e(tag, "[3a] Blogger retornou ${bloggerVideos.size} vídeo(s).")
+                        Log.e(tag, "[4a] Blogger retornou ${bloggerVideos.size} vídeo(s).")
                         videos.addAll(bloggerVideos)
                     }
-                }.onFailure { Log.e(tag, "[3a] Erro Blogger: ${it.message}") }
+                }.onFailure { Log.e(tag, "[4a] Erro Blogger: ${it.message}") }
 
                 if (videos.isEmpty()) {
                     val innerHtml = fetchHtml(fullUrl, pageUrl) ?: continue
                     obfuscatedRegex.find(innerHtml)?.let { m ->
                         deobfuscate(m.groupValues[1])?.let { url ->
-                            Log.e(tag, "[3b] URL via obfuscated no iframe: $url")
+                            Log.e(tag, "[4b] URL via obfuscated no iframe: $url")
                             videos.add(buildVideo(url, pageUrl, baseHeaders))
-                        }
-                    }
-                    if (videos.isEmpty()) {
-                        mp4Regex.findAll(innerHtml).forEach { m ->
-                            val url = sanitize(m.value)
-                            if (videos.none { it.url == url }) {
-                                Log.e(tag, "[3b] mp4 achado no iframe: $url")
-                                videos.add(buildVideo(url, pageUrl, baseHeaders))
-                            }
                         }
                     }
                 }
@@ -101,29 +107,12 @@ class UniversalExtractor(private val client: OkHttpClient) {
             }
         }
 
-        // -------- Estratégia 4: mp4 direto no HTML --------
+        // -------- Estratégia 5: mp4 direto no HTML --------
         if (videos.isEmpty()) {
             mp4Regex.findAll(html).forEach { m ->
                 val url = sanitize(m.value)
                 if (videos.none { it.url == url }) {
-                    Log.e(tag, "[4] mp4 direto no HTML: $url")
-                    videos.add(buildVideo(url, pageUrl, baseHeaders))
-                }
-            }
-        }
-
-        // -------- Estratégia 5: <video><source src="..."> --------
-        if (videos.isEmpty()) {
-            val sourceRegex = Regex(
-                """<source[^>]+src=["']([^"']+)["']""",
-                RegexOption.IGNORE_CASE,
-            )
-            sourceRegex.findAll(html).forEach { m ->
-                val raw = m.groupValues[1]
-                if (raw.startsWith("blob:")) return@forEach
-                val url = sanitize(raw)
-                if (url.startsWith("http") && videos.none { it.url == url }) {
-                    Log.e(tag, "[5] source: $url")
+                    Log.e(tag, "[5] mp4 direto no HTML: $url")
                     videos.add(buildVideo(url, pageUrl, baseHeaders))
                 }
             }
@@ -142,10 +131,34 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     private fun buildVideo(url: String, pageUrl: String, baseHeaders: Headers): Video {
         val cleanUrl = sanitize(url)
+        val origin = Regex("""^(https?://[^/]+)""").find(pageUrl)?.value ?: "https://rule34video.co"
+
+        val cookies = try {
+            val httpUrl = cleanUrl.toHttpUrlOrNull()
+            if (httpUrl != null) {
+                client.cookieJar.loadForRequest(httpUrl)
+                    .joinToString("; ") { "${it.name}=${it.value}" }
+                    .takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Erro ao pegar cookies: ${e.message}")
+            null
+        }
+
         val videoHeaders = baseHeaders.newBuilder()
             .add("Accept", "*/*")
             .add("Referer", pageUrl)
+            .add("Origin", origin)
+            .apply {
+                if (!cookies.isNullOrBlank()) {
+                    add("Cookie", cookies)
+                    Log.e(tag, "Cookies adicionados: ${cookies.take(80)}")
+                }
+            }
             .build()
+
         val quality = detectQuality(cleanUrl)
         return Video(cleanUrl, quality, cleanUrl, videoHeaders)
     }
