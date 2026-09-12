@@ -69,8 +69,7 @@ class UniversalExtractor(private val client: OkHttpClient) {
      * Ordena a lista de vídeos por qualidade decrescente.
      * Assim o 720p fica primeiro (padrão do Aniyomi) e o 360p depois.
      */
-    private fun sortByQuality(videos: List<Video>): List<Video> =
-        videos.sortedByDescending { extractResolution(it.quality) }
+    private fun sortByQuality(videos: List<Video>): List<Video> = videos.sortedByDescending { extractResolution(it.quality) }
 
     /**
      * Extrai a resolução numérica de uma label tipo "720p", "360p", "Blogger SD/HD 1".
