@@ -131,33 +131,44 @@ class UniversalExtractor(private val client: OkHttpClient) {
 
     private fun buildVideo(url: String, pageUrl: String, baseHeaders: Headers): Video {
         val cleanUrl = sanitize(url)
-        val origin = Regex("""^(https?://[^/]+)""").find(pageUrl)?.value ?: "https://rule34video.co"
+        val isGoogleVideo = cleanUrl.contains("googlevideo.com")
 
-        val cookies = try {
-            val httpUrl = cleanUrl.toHttpUrlOrNull()
-            if (httpUrl != null) {
-                client.cookieJar.loadForRequest(httpUrl)
-                    .joinToString("; ") { "${it.name}=${it.value}" }
-                    .takeIf { it.isNotBlank() }
-            } else {
+        val videoHeaders = if (isGoogleVideo) {
+            // Headers específicos para GoogleVideo/Blogger (evita 403)
+            Headers.Builder()
+                .add("User-Agent", uaDesktop)
+                .add("Referer", "https://www.blogger.com/")
+                .add("Accept", "*/*")
+                .build()
+        } else {
+            // Headers padrão para vídeos diretos do site
+            val origin = Regex("""^(https?://[^/]+)""").find(pageUrl)?.value ?: "https://rule34video.co"
+            val cookies = try {
+                val httpUrl = cleanUrl.toHttpUrlOrNull()
+                if (httpUrl != null) {
+                    client.cookieJar.loadForRequest(httpUrl)
+                        .joinToString("; ") { "${it.name}=${it.value}" }
+                        .takeIf { it.isNotBlank() }
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "Erro ao pegar cookies: ${e.message}")
                 null
             }
-        } catch (e: Exception) {
-            Log.e(tag, "Erro ao pegar cookies: ${e.message}")
-            null
-        }
 
-        val videoHeaders = baseHeaders.newBuilder()
-            .add("Accept", "*/*")
-            .add("Referer", pageUrl)
-            .add("Origin", origin)
-            .apply {
-                if (!cookies.isNullOrBlank()) {
-                    add("Cookie", cookies)
-                    Log.e(tag, "Cookies adicionados: ${cookies.take(80)}")
+            baseHeaders.newBuilder()
+                .add("Accept", "*/*")
+                .add("Referer", pageUrl)
+                .add("Origin", origin)
+                .apply {
+                    if (!cookies.isNullOrBlank()) {
+                        add("Cookie", cookies)
+                        Log.e(tag, "Cookies adicionados: ${cookies.take(80)}")
+                    }
                 }
-            }
-            .build()
+                .build()
+        }
 
         val quality = detectQuality(cleanUrl)
         return Video(cleanUrl, quality, cleanUrl, videoHeaders)
