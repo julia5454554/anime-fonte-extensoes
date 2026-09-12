@@ -1,10 +1,12 @@
 package eu.kanade.tachiyomi.animeextension.pt.cosxplay
 
+import android.util.Base64
 import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 import java.net.URLDecoder
 
 class ProxyServer(private val client: OkHttpClient) : NanoHTTPD("127.0.0.1", 0) {
@@ -16,24 +18,19 @@ class ProxyServer(private val client: OkHttpClient) : NanoHTTPD("127.0.0.1", 0) 
         val params = session.parameters
         val urlParam = params["url"]?.firstOrNull()
             ?: return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "missing url")
-        val refParam = params["ref"]?.firstOrNull()
+        val headersParam = params["h"]?.firstOrNull()
 
         val targetUrl = URLDecoder.decode(urlParam, "UTF-8")
-        val referer = refParam?.let { URLDecoder.decode(it, "UTF-8") } ?: "https://cosxplay.com/"
+        val headerMap = decodeHeaders(headersParam)
 
-        val reqHeaders = Headers.Builder()
-            .set("User-Agent", UA)
-            .set("Referer", referer)
-            .set("Origin", "https://cosxplay.com")
-            .set("Accept", "*/*")
-            .set("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
-            .build()
+        val reqHeaders = Headers.Builder().apply {
+            headerMap.forEach { (k, v) -> set(k, v) }
+        }.build()
 
         val reqBuilder = Request.Builder().url(targetUrl).headers(reqHeaders).get()
-        val rangeHeader = session.headers["range"]
-        if (rangeHeader != null) reqBuilder.header("Range", rangeHeader)
+        session.headers["range"]?.let { reqBuilder.header("Range", it) }
 
-        Log.d(TAG, "→ ${if (rangeHeader != null) "RANGE=$rangeHeader " else ""}$targetUrl")
+        Log.d(TAG, "→ range=${session.headers["range"]} url=$targetUrl")
 
         val upstream = try {
             client.newCall(reqBuilder.build()).execute()
@@ -42,17 +39,17 @@ class ProxyServer(private val client: OkHttpClient) : NanoHTTPD("127.0.0.1", 0) 
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", e.message ?: "err")
         }
 
-        Log.d(TAG, "← ${upstream.code} (len=${upstream.header("Content-Length")}, range=${upstream.header("Content-Range")})")
+        Log.d(TAG, "← ${upstream.code} len=${upstream.header("Content-Length")} range=${upstream.header("Content-Range")}")
 
         if (upstream.code >= 400) {
-            val errMsg = "upstream ${upstream.code}"
+            val code = upstream.code
             upstream.close()
-            return newFixedLengthResponse(Response.Status.lookup(upstream.code) ?: Response.Status.INTERNAL_ERROR, "text/plain", errMsg)
+            val status = Response.Status.lookup(code) ?: Response.Status.INTERNAL_ERROR
+            return newFixedLengthResponse(status, "text/plain", "upstream $code")
         }
 
         val body = upstream.body
             ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "no body")
-
         val mime = upstream.header("Content-Type") ?: "video/mp4"
         val status = if (upstream.code == 206) Response.Status.PARTIAL_CONTENT else Response.Status.OK
         val length = body.contentLength()
@@ -67,9 +64,18 @@ class ProxyServer(private val client: OkHttpClient) : NanoHTTPD("127.0.0.1", 0) 
         return nano
     }
 
+    private fun decodeHeaders(b64: String?): Map<String, String> {
+        if (b64.isNullOrEmpty()) return emptyMap()
+        return try {
+            val json = String(Base64.decode(b64, Base64.URL_SAFE or Base64.NO_WRAP))
+            val obj = JSONObject(json)
+            obj.keys().asSequence().associateWith { obj.getString(it) }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
     companion object {
         private const val TAG = "CosXplayProxy"
-        const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 }
