@@ -1,13 +1,11 @@
 package eu.kanade.tachiyomi.animeextension.pt.cosxplay
 
-import eu.kanade.tachiyomi.animeextension.pt.cosxplay.extractors.UniversalExtractor
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import io.reactivex.Observable
 import okhttp3.Request
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -19,13 +17,14 @@ class CosXplay : ParsedAnimeHttpSource() {
     override val lang = "pt"
     override val supportsLatest = true
 
-    private val universalExtractor by lazy { UniversalExtractor(client, headers) }
-
     // ==================== Populares ====================
 
     override fun popularAnimeSelector(): String = "article"
 
-    override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/page/$page/", headers)
+    override fun popularAnimeRequest(page: Int): Request {
+        val url = if (page == 1) "$baseUrl/" else "$baseUrl/page/$page/"
+        return GET(url, headers)
+    }
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         val link = element.selectFirst("h2 a")?.attr("href") ?: element.selectFirst("a")?.attr("href") ?: ""
@@ -35,7 +34,7 @@ class CosXplay : ParsedAnimeHttpSource() {
         return SAnime.create().apply {
             setUrlWithoutDomain(link)
             this.title = title
-            this.thumbnail_url = thumb
+            thumbnail_url = thumb
         }
     }
 
@@ -74,33 +73,20 @@ class CosXplay : ParsedAnimeHttpSource() {
     }
 
     // ==================== Episódios ====================
+    // 1 episódio por página. Extrai a URL atual do og:url e converte para o embed.
 
-    override fun fetchEpisodeList(anime: SAnime): Observable<List<SEpisode>> = Observable.fromCallable {
-        listOf(
-            SEpisode.create().apply {
-                setUrlWithoutDomain(anime.url)
-                name = "Vídeo"
-                episode_number = 1f
-            },
-        )
-    }
-
-    override fun episodeListSelector(): String = "article"
+    override fun episodeListSelector(): String = "meta[property=og:url]"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
-        setUrlWithoutDomain(element.selectFirst("a")?.attr("href") ?: "")
+        val pageUrl = element.attr("content")
+        val id = pageUrl.trimEnd('/').substringAfterLast('/').substringBefore('-')
+        setUrlWithoutDomain("/embed/$id/")
         name = "Vídeo"
         episode_number = 1f
     }
 
     // ==================== Vídeos ====================
-
-    override fun fetchVideoList(episode: SEpisode): Observable<List<Video>> = Observable.fromCallable {
-        val pageUrl = baseUrl + episode.url
-        val id = pageUrl.trimEnd('/').substringAfterLast('/').substringBefore('-')
-        val embedUrl = "$baseUrl/embed/$id/"
-        universalExtractor.videosFromUrl(embedUrl, pageUrl).sortedByDescending { extractResolution(it.quality) }
-    }
+    // O embed tem <video><source src="..." title="high|low" type="video/mp4">
 
     override fun videoListSelector(): String = "video source"
 
@@ -111,14 +97,4 @@ class CosXplay : ParsedAnimeHttpSource() {
     }
 
     override fun videoUrlParse(document: Document): String = document.selectFirst("video source")?.attr("src") ?: ""
-
-    private fun extractResolution(quality: String): Int = when {
-        quality.contains("1080") -> 1080
-        quality.contains("720") -> 720
-        quality.contains("high", ignoreCase = true) -> 720
-        quality.contains("480") -> 480
-        quality.contains("360") -> 360
-        quality.contains("low", ignoreCase = true) -> 360
-        else -> 0
-    }
 }
