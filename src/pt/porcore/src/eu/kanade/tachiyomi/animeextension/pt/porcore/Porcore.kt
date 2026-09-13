@@ -97,22 +97,21 @@ class Porcore : AnimeHttpSource() {
     }
 
     // ============================= Utilities ==============================
-    private fun parseVideoCards(document: Document): List<SAnime> =
-        document.select("div.onevideothumb").mapNotNull { element ->
-            val link = element.selectFirst("a.clip-link") ?: return@mapNotNull null
-            val href = link.attr("href")
-            if (href.isEmpty()) return@mapNotNull null
-            val title = link.attr("title").ifBlank {
-                link.selectFirst("h5")?.text()?.trim() ?: ""
-            }
-            val img = element.selectFirst("img")
-            val thumbnail = img?.attr("src")
-            SAnime.create().apply {
-                this.title = title
-                setUrlWithoutDomain(href)
-                thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
-            }
+    private fun parseVideoCards(document: Document): List<SAnime> = document.select("div.onevideothumb").mapNotNull { element ->
+        val link = element.selectFirst("a.clip-link") ?: return@mapNotNull null
+        val href = link.attr("href")
+        if (href.isEmpty()) return@mapNotNull null
+        val title = link.attr("title").ifBlank {
+            link.selectFirst("h5")?.text()?.trim() ?: ""
         }
+        val img = element.selectFirst("img")
+        val thumbnail = img?.attr("src")
+        SAnime.create().apply {
+            this.title = title
+            setUrlWithoutDomain(href)
+            thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
+        }
+    }
 
     private fun extractDescription(document: Document): String {
         val selectors = listOf(
