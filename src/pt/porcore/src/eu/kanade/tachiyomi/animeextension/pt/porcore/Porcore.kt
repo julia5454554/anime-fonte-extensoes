@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.pt.porcore
 
+import android.util.Log
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -20,34 +21,24 @@ class Porcore : AnimeHttpSource() {
     override val lang = "pt"
     override val supportsLatest = true
 
-    private val lastPageUrls = HashSet<String>()
-
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
 
     // ============================== Popular ===============================
     override fun popularAnimeRequest(page: Int): Request {
-        val url = if (page == 1) baseUrl else "$baseUrl/?ajax&p=$page"
+        val url = if (page == 1) "$baseUrl/" else "$baseUrl/?ajax&p=$page"
         return GET(url, headers)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
+        Log.d(TAG, "popular ← ${response.code} url=${response.request.url}")
         val document = response.asJsoup()
         val animes = parseVideoCards(document)
-
-        if (animes.isEmpty()) {
-            return AnimesPage(emptyList(), false)
-        }
-
-        val currentUrls = animes.map { it.url }.toSet()
-        if (currentUrls.isNotEmpty() && lastPageUrls.containsAll(currentUrls)) {
-            return AnimesPage(emptyList(), false)
-        }
-        lastPageUrls.clear()
-        lastPageUrls.addAll(currentUrls)
-
-        return AnimesPage(animes, true)
+        Log.d(TAG, "popular cards=${animes.size} htmlSize=${document.html().length}")
+        return AnimesPage(animes, animes.isNotEmpty())
     }
 
     // =============================== Latest ===============================
@@ -56,7 +47,6 @@ class Porcore : AnimeHttpSource() {
 
     // =============================== Search ===============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        // Busca usa a rota /show/{termo}?ajax&sort=newest
         val encodedQuery = query.trim().replace(" ", "%20")
         val url = if (page == 1) {
             "$baseUrl/show/$encodedQuery?ajax&sort=newest"
@@ -67,76 +57,62 @@ class Porcore : AnimeHttpSource() {
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
+        Log.d(TAG, "search ← ${response.code} url=${response.request.url}")
         val document = response.asJsoup()
         val animes = parseVideoCards(document)
-
-        if (animes.isEmpty()) {
-            return AnimesPage(emptyList(), false)
-        }
-
-        val currentUrls = animes.map { it.url }.toSet()
-        if (currentUrls.isNotEmpty() && lastPageUrls.containsAll(currentUrls)) {
-            return AnimesPage(emptyList(), false)
-        }
-        lastPageUrls.clear()
-        lastPageUrls.addAll(currentUrls)
-
-        return AnimesPage(animes, true)
+        Log.d(TAG, "search cards=${animes.size} htmlSize=${document.html().length}")
+        return AnimesPage(animes, animes.isNotEmpty())
     }
 
     // =========================== Anime Details ============================
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
-        val anime = SAnime.create()
-        anime.setUrlWithoutDomain(response.request.url.toString())
-
-        anime.title = document.selectFirst("h1")?.text()?.trim()
-            ?: document.selectFirst("meta[property='og:title']")?.attr("content")?.trim()
-            ?: "Sem título"
-
-        anime.thumbnail_url = document.selectFirst("div.video-player img")?.attr("src")
-            ?: document.selectFirst("div.video-player")?.attr("poster")
-            ?: document.selectFirst("meta[property='og:image']")?.attr("content")
-            ?: ""
-
-        anime.description = extractDescription(document)
-        anime.status = SAnime.COMPLETED
-        return anime
+        return SAnime.create().apply {
+            setUrlWithoutDomain(response.request.url.toString())
+            title = document.selectFirst("h1")?.text()?.trim()
+                ?: document.selectFirst("meta[property='og:title']")?.attr("content")?.trim()
+                ?: "Sem título"
+            thumbnail_url = document.selectFirst("div.video-player img")?.attr("src")
+                ?: document.selectFirst("meta[property='og:image']")?.attr("content")
+                ?: ""
+            description = extractDescription(document)
+            status = SAnime.COMPLETED
+        }
     }
 
     // =========================== Episode List ============================
-    override fun episodeListParse(response: Response): List<SEpisode> {
-        val episode = SEpisode.create().apply {
+    override fun episodeListParse(response: Response): List<SEpisode> = listOf(
+        SEpisode.create().apply {
             setUrlWithoutDomain(response.request.url.toString())
             name = "Vídeo"
             episode_number = 1f
             date_upload = 0L
-        }
-        return listOf(episode)
-    }
+        },
+    )
 
     // ============================ Video Links =============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val pageUrl = response.request.url.toString()
-        return extractVideosFromDocument(document, pageUrl)
+        return extractVideosFromDocument(document, response.request.url.toString())
     }
 
     // ============================= Utilities ==============================
-    private fun parseVideoCards(document: Document): List<SAnime> {
-        return document.select("div.onevideothumb").mapNotNull { element ->
+    private fun parseVideoCards(document: Document): List<SAnime> =
+        document.select("div.onevideothumb").mapNotNull { element ->
             val link = element.selectFirst("a.clip-link") ?: return@mapNotNull null
-            val title = link.attr("title").trim()
             val href = link.attr("href")
-            val thumbnail = element.selectFirst("img")?.attr("src")
-
+            if (href.isEmpty()) return@mapNotNull null
+            val title = link.attr("title").ifBlank {
+                link.selectFirst("h5")?.text()?.trim() ?: ""
+            }
+            val img = element.selectFirst("img")
+            val thumbnail = img?.attr("src")
             SAnime.create().apply {
                 this.title = title
-                this.setUrlWithoutDomain(href)
-                this.thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
+                setUrlWithoutDomain(href)
+                thumbnail_url = thumbnail?.let { if (it.startsWith("http")) it else baseUrl + it }
             }
         }
-    }
 
     private fun extractDescription(document: Document): String {
         val selectors = listOf(
@@ -149,15 +125,13 @@ class Porcore : AnimeHttpSource() {
             "meta[property='og:description']",
         )
         for (selector in selectors) {
-            val element = document.selectFirst(selector)
-            if (element != null) {
-                if (element.tagName() == "meta") {
-                    val content = element.attr("content").trim()
-                    if (content.isNotBlank()) return content
-                } else {
-                    val text = element.text().trim()
-                    if (text.isNotBlank()) return text
-                }
+            val element = document.selectFirst(selector) ?: continue
+            if (element.tagName() == "meta") {
+                val content = element.attr("content").trim()
+                if (content.isNotBlank()) return content
+            } else {
+                val text = element.text().trim()
+                if (text.isNotBlank()) return text
             }
         }
         return ""
@@ -177,12 +151,10 @@ class Porcore : AnimeHttpSource() {
             } else if (src.startsWith("/")) {
                 src = "$baseUrl$src"
             }
-
             val videoHeaders = headers.newBuilder()
                 .set("Referer", pageUrl)
                 .set("Accept", "*/*")
                 .build()
-
             val quality = if (src.contains(".mp4", ignoreCase = true)) "MP4" else "HLS"
             videos.add(Video(src, quality, src, videoHeaders))
         }
@@ -195,12 +167,10 @@ class Porcore : AnimeHttpSource() {
                 } else if (src.startsWith("/")) {
                     src = "$baseUrl$src"
                 }
-
                 val videoHeaders = headers.newBuilder()
                     .set("Referer", pageUrl)
                     .set("Accept", "*/*")
                     .build()
-
                 val quality = if (src.contains(".mp4", ignoreCase = true)) "MP4" else "Video"
                 videos.add(Video(src, quality, src, videoHeaders))
             }
@@ -220,5 +190,9 @@ class Porcore : AnimeHttpSource() {
         }
 
         return videos.distinctBy { it.url }
+    }
+
+    companion object {
+        private const val TAG = "Porcore"
     }
 }
