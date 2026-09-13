@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.pt.porcore
 
-import android.util.Log
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -34,10 +33,8 @@ class Porcore : AnimeHttpSource() {
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        Log.d(TAG, "popular ← ${response.code} url=${response.request.url}")
         val document = response.asJsoup()
         val animes = parseVideoCards(document)
-        Log.d(TAG, "popular cards=${animes.size} htmlSize=${document.html().length}")
         return AnimesPage(animes, animes.isNotEmpty())
     }
 
@@ -57,10 +54,8 @@ class Porcore : AnimeHttpSource() {
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
-        Log.d(TAG, "search ← ${response.code} url=${response.request.url}")
         val document = response.asJsoup()
         val animes = parseVideoCards(document)
-        Log.d(TAG, "search cards=${animes.size} htmlSize=${document.html().length}")
         return AnimesPage(animes, animes.isNotEmpty())
     }
 
@@ -138,40 +133,27 @@ class Porcore : AnimeHttpSource() {
 
     private fun extractVideosFromDocument(document: Document, pageUrl: String): List<Video> {
         val videos = mutableListOf<Video>()
+        val videoHeaders = buildVideoHeaders(pageUrl)
 
         val source = document.selectFirst("video#currentvideo_html5_api source[src]")
             ?: document.selectFirst("div.video-player source[src]")
             ?: document.selectFirst("video source[src]")
 
         if (source != null) {
-            var src = source.attr("src").trim()
-            if (src.startsWith("//")) {
-                src = "https:$src"
-            } else if (src.startsWith("/")) {
-                src = "$baseUrl$src"
+            val src = normalizeUrl(source.attr("src").trim())
+            if (src.isNotEmpty()) {
+                val quality = if (src.contains(".mp4", ignoreCase = true)) "MP4" else "HLS"
+                videos.add(Video(src, quality, src, videoHeaders))
             }
-            val videoHeaders = headers.newBuilder()
-                .set("Referer", pageUrl)
-                .set("Accept", "*/*")
-                .build()
-            val quality = if (src.contains(".mp4", ignoreCase = true)) "MP4" else "HLS"
-            videos.add(Video(src, quality, src, videoHeaders))
         }
 
         if (videos.isEmpty()) {
             document.select("video[src]").forEach { element ->
-                var src = element.attr("src").trim()
-                if (src.startsWith("//")) {
-                    src = "https:$src"
-                } else if (src.startsWith("/")) {
-                    src = "$baseUrl$src"
+                val src = normalizeUrl(element.attr("src").trim())
+                if (src.isNotEmpty()) {
+                    val quality = if (src.contains(".mp4", ignoreCase = true)) "MP4" else "Video"
+                    videos.add(Video(src, quality, src, videoHeaders))
                 }
-                val videoHeaders = headers.newBuilder()
-                    .set("Referer", pageUrl)
-                    .set("Accept", "*/*")
-                    .build()
-                val quality = if (src.contains(".mp4", ignoreCase = true)) "MP4" else "Video"
-                videos.add(Video(src, quality, src, videoHeaders))
             }
         }
 
@@ -180,10 +162,6 @@ class Porcore : AnimeHttpSource() {
             mediaRegex.findAll(document.html()).forEach { match ->
                 val url = match.value.replace("&amp;", "&")
                 val quality = if (url.contains(".mp4", ignoreCase = true)) "MP4" else "HLS"
-                val videoHeaders = headers.newBuilder()
-                    .set("Referer", pageUrl)
-                    .set("Accept", "*/*")
-                    .build()
                 videos.add(Video(url, quality, url, videoHeaders))
             }
         }
@@ -191,7 +169,17 @@ class Porcore : AnimeHttpSource() {
         return videos.distinctBy { it.url }
     }
 
-    companion object {
-        private const val TAG = "Porcore"
+    private fun normalizeUrl(raw: String): String = when {
+        raw.startsWith("//") -> "https:$raw"
+        raw.startsWith("/") -> "$baseUrl$raw"
+        else -> raw
     }
+
+    private fun buildVideoHeaders(pageUrl: String): Headers = headers.newBuilder()
+        .set("Referer", pageUrl)
+        .set("Accept", "video/webm,video/ogg,video/*;q=0.9,*/*;q=0.5")
+        .set("Accept-Encoding", "identity")
+        .set("Range", "bytes=0-")
+        .set("Connection", "keep-alive")
+        .build()
 }
