@@ -26,8 +26,6 @@ class JavRider : AnimeHttpSource() {
 
     private val apiUrl = "$baseUrl/wp-json/wp/v2"
     private val embedParam = "wp:featuredmedia"
-
-    // Categoria "subtitle-pt" no WordPress (visto no HTML: data-cat-id="cat_135")
     private val ptCategoryId = "135"
 
     private val desktopUa =
@@ -98,7 +96,6 @@ class JavRider : AnimeHttpSource() {
     private fun parsePosts(response: Response): AnimesPage {
         val body = safeBody(response)
         if (body.isBlank()) return AnimesPage(emptyList(), false)
-        Log.e("JavRider", "LIST url=${response.request.url} len=${body.length}")
         return try {
             val json = JSONArray(body)
             val list = ArrayList<SAnime>(json.length())
@@ -121,10 +118,8 @@ class JavRider : AnimeHttpSource() {
                 }
                 if (realUrl.isNotEmpty()) list.add(anime)
             }
-            Log.e("JavRider", "LIST parsed=${list.size} hasNext=${json.length() == 24}")
             AnimesPage(list, json.length() == 24)
-        } catch (e: Exception) {
-            Log.e("JavRider", "LIST erro: ${e.message}")
+        } catch (_: Exception) {
             AnimesPage(emptyList(), false)
         }
     }
@@ -185,8 +180,12 @@ class JavRider : AnimeHttpSource() {
                 it.attr("src").ifEmpty { it.attr("data-lazy-src") }
             }.orEmpty()
 
+            Log.e("JavRider", "VIDEO referer=$referer iframe=$iframeSrc")
+
             if (iframeSrc.startsWith("http")) {
                 videos.addAll(extractFromPlayer(iframeSrc, referer))
+            } else {
+                Log.e("JavRider", "VIDEO iframe não encontrado!")
             }
         } catch (e: Exception) {
             Log.e("JavRider", "VIDEO erro: ${e.message}", e)
@@ -195,9 +194,9 @@ class JavRider : AnimeHttpSource() {
         return videos
     }
 
-    private fun videoHeadersFor(): Headers = Headers.Builder()
+    private fun videoHeadersFor(referer: String): Headers = Headers.Builder()
         .add("User-Agent", desktopUa)
-        .add("Referer", "https://javplayers.com/")
+        .add("Referer", referer)
         .add("Origin", "https://javplayers.com")
         .add("Accept", "*/*")
         .add("Accept-Encoding", "identity")
@@ -207,58 +206,76 @@ class JavRider : AnimeHttpSource() {
         val videos = mutableListOf<Video>()
         val hash = Regex("""/video/([a-f0-9]{16,})""")
             .find(iframeUrl)?.groupValues?.get(1)
-            ?: return videos
+        if (hash == null) {
+            Log.e("JavRider", "PLAYER hash não encontrado em $iframeUrl")
+            return videos
+        }
+        Log.e("JavRider", "PLAYER hash=$hash")
 
-        // Passo 1: visitar iframe (cookies)
+        // Passo 1: visitar iframe (popula cookies)
         try {
             val pageReq = Request.Builder()
                 .url(iframeUrl)
                 .headers(playerPageHeaders(referer))
                 .build()
             client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
-        } catch (_: Exception) {
-            // segue
+        } catch (e: Exception) {
+            Log.e("JavRider", "PLAYER iframe visit erro: ${e.message}")
         }
 
         // Passo 2: API getVideo
         val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
         val body = tryApiGet(apiUrl, iframeUrl)
+        Log.e("JavRider", "PLAYER api[${body.length}]=${body.take(800)}")
         if (body.isBlank()) return videos
 
-        // Passo 3: extrai securedLink
+        // Passo 3: extrai securedLink + videoSource
         val normalized = body.replace("\\/", "/").replace("\\u002F", "/")
         var secured: String? = null
+        var source: String? = null
+
         try {
             val json = JSONObject(normalized)
             secured = json.optString("securedLink", "").takeIf { it.startsWith("http") }
+            source = json.optString("videoSource", "").takeIf { it.startsWith("http") }
         } catch (_: Exception) {
             // não é JSON puro
         }
         if (secured == null) {
             secured = Regex(""""securedLink"\s*:\s*"([^"]+)"""")
-                .find(normalized)?.groupValues?.get(1)
-                ?.takeIf { it.startsWith("http") }
+                .find(normalized)?.groupValues?.get(1)?.takeIf { it.startsWith("http") }
+        }
+        if (source == null) {
+            source = Regex(""""videoSource"\s*:\s*"([^"]+)"""")
+                .find(normalized)?.groupValues?.get(1)?.takeIf { it.startsWith("http") }
         }
         if (secured == null) {
             secured = Regex("""(https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+)""")
                 .find(normalized)?.groupValues?.get(1)
         }
-        if (secured == null) return videos
 
-        Log.e("JavRider", "secured=$secured")
+        Log.e("JavRider", "PLAYER secured=$secured")
+        Log.e("JavRider", "PLAYER source=$source")
 
-        // Passo 4: parseia o m3u8 master pra listar resoluções
-        val masterBody = tryApiGet(secured, "https://javplayers.com/")
-        Log.e("JavRider", "master[${masterBody.length}]=${masterBody.take(1200)}")
+        val usedUrl = secured ?: source
+        if (usedUrl == null) {
+            Log.e("JavRider", "PLAYER nenhum link encontrado no body")
+            return videos
+        }
 
-        val variants = parseM3u8Master(masterBody, secured)
+        // Passo 4: parseia m3u8 master
+        val masterBody = tryApiGet(usedUrl, "https://javplayers.com/")
+        Log.e("JavRider", "PLAYER master[${masterBody.length}]=${masterBody.take(600)}")
+
+        val variants = parseM3u8Master(masterBody, usedUrl)
         if (variants.isNotEmpty()) {
             variants.forEach { (label, url) ->
-                videos.add(Video(url, label, url, videoHeadersFor()))
+                videos.add(Video(url, label, url, videoHeadersFor(iframeUrl)))
             }
+            Log.e("JavRider", "PLAYER variants=${variants.size}")
         } else {
-            // fallback: master direto (player escolhe)
-            videos.add(Video(secured, "Auto", secured, videoHeadersFor()))
+            Log.e("JavRider", "PLAYER sem variantes, usando master direto")
+            videos.add(Video(usedUrl, "Auto", usedUrl, videoHeadersFor(iframeUrl)))
         }
         return videos
     }
