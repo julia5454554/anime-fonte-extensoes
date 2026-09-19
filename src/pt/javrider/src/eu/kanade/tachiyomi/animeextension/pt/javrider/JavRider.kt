@@ -22,7 +22,6 @@ class JavRider : AnimeHttpSource() {
     override val supportsLatest = true
 
     private val apiUrl = "$baseUrl/wp-json/wp/v2"
-    private val fields = "id,title,link,_embedded"
     private val embedParam = "wp:featuredmedia"
 
     private val apiHeaders: Headers by lazy {
@@ -53,7 +52,7 @@ class JavRider : AnimeHttpSource() {
     // ==================== LISTAGEM ====================
 
     override fun popularAnimeRequest(page: Int): Request {
-        val url = "$apiUrl/posts?per_page=24&page=$page&_embed=$embedParam&_fields=$fields"
+        val url = "$apiUrl/posts?per_page=24&page=$page&_embed=$embedParam"
         return GET(url, apiHeaders)
     }
 
@@ -61,7 +60,7 @@ class JavRider : AnimeHttpSource() {
 
     override fun latestUpdatesRequest(page: Int): Request {
         val url = "$apiUrl/posts?per_page=24&page=$page&orderby=date&order=desc" +
-            "&_embed=$embedParam&_fields=$fields"
+            "&_embed=$embedParam"
         return GET(url, apiHeaders)
     }
 
@@ -69,8 +68,7 @@ class JavRider : AnimeHttpSource() {
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val q = URLEncoder.encode(query, "UTF-8")
-        val url = "$apiUrl/posts?search=$q&per_page=24&page=$page" +
-            "&_embed=$embedParam&_fields=$fields"
+        val url = "$apiUrl/posts?search=$q&per_page=24&page=$page&_embed=$embedParam"
         return GET(url, apiHeaders)
     }
 
@@ -83,15 +81,24 @@ class JavRider : AnimeHttpSource() {
             val list = ArrayList<SAnime>(json.length())
             for (i in 0 until json.length()) {
                 val post = json.getJSONObject(i)
+                val slug = post.optString("slug", "")
+                val apiLink = post.optString("link", "")
+                val realUrl = when {
+                    slug.isNotEmpty() -> "$baseUrl/pt/$slug/"
+                    apiLink.startsWith("http") -> apiLink
+                    else -> apiLink
+                }
+                val thumb = post.optJSONObject("_embedded")
+                    ?.optJSONArray("wp:featuredmedia")
+                    ?.optJSONObject(0)
+                    ?.optString("source_url")
+                    ?.takeIf { it.startsWith("http") }
+
                 val anime = SAnime.create().apply {
                     title = post.getJSONObject("title").getString("rendered")
                         .replace(Regex("<[^>]+>"), "").trim()
-                    url = post.getString("link")
-                    thumbnail_url = post.optJSONObject("_embedded")
-                        ?.optJSONArray("wp:featuredmedia")
-                        ?.optJSONObject(0)
-                        ?.optString("source_url")
-                        ?.takeIf { it.isNotEmpty() && it != "null" }
+                    url = realUrl
+                    thumbnail_url = thumb
                 }
                 list.add(anime)
             }
@@ -103,12 +110,17 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== DETALHES ====================
 
+    override fun animeDetailsRequest(anime: SAnime): Request {
+        val url = anime.url.takeIf { it.startsWith("http") } ?: "$baseUrl${anime.url}"
+        return GET(url, apiHeaders)
+    }
+
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
         val anime = SAnime.create()
         anime.title = document.selectFirst("h1.entry-title")?.text()?.trim().orEmpty()
         anime.thumbnail_url = document.selectFirst("meta[property=og:image]")
-            ?.attr("content")?.takeIf { it.isNotEmpty() }
+            ?.attr("content")?.takeIf { it.startsWith("http") }
         anime.genre = document.select("a.category-item").joinToString(", ") { it.text() }
             .takeIf { it.isNotEmpty() }
 
