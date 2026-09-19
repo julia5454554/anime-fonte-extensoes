@@ -106,8 +106,7 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== DETALHES ====================
 
-    override fun animeDetailsRequest(anime: SAnime): Request =
-        GET(resolveUrl(anime.url), apiHeaders)
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(resolveUrl(anime.url), apiHeaders)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
@@ -129,8 +128,7 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== EPISÓDIOS ====================
 
-    override fun episodeListRequest(anime: SAnime): Request =
-        GET(resolveUrl(anime.url), apiHeaders)
+    override fun episodeListRequest(anime: SAnime): Request = GET(resolveUrl(anime.url), apiHeaders)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val ep = SEpisode.create().apply {
@@ -143,8 +141,7 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== VÍDEO ====================
 
-    override fun videoListRequest(episode: SEpisode): Request =
-        GET(resolveUrl(episode.url), apiHeaders)
+    override fun videoListRequest(episode: SEpisode): Request = GET(resolveUrl(episode.url), apiHeaders)
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
@@ -200,7 +197,6 @@ class JavRider : AnimeHttpSource() {
             val req = Request.Builder().url(iframeUrl).headers(reqHeaders).build()
             val rawHtml = client.newCall(req).execute().use { it.body!!.string() }
 
-            // Normaliza escapes comuns em JS/JSON
             val html = rawHtml
                 .replace("\\/", "/")
                 .replace("\\u002F", "/")
@@ -208,14 +204,12 @@ class JavRider : AnimeHttpSource() {
                 .replace("\\u0026", "&")
                 .replace("&amp;", "&")
 
-            // 1) m3 URL (a boa)
             Regex("""https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+""")
                 .findAll(html).map { it.value }.distinct()
                 .forEachIndexed { i, url ->
                     videos.add(Video(url, "Servidor ${i + 1}", url, videoHeadersFor(iframeUrl)))
                 }
 
-            // 2) qualquer m3u8/mp4 direto
             if (videos.isEmpty()) {
                 Regex("""https?://[^"'\s\\<>]+\.(?:m3u8|mp4)[^"'\s\\<>]*""")
                     .findAll(html).map { it.value }.distinct()
@@ -226,7 +220,6 @@ class JavRider : AnimeHttpSource() {
                     }
             }
 
-            // 3) fallback: strings base64 grandes → decodifica e procura URL
             if (videos.isEmpty()) {
                 Regex("""[A-Za-z0-9+/]{60,}={0,2}""")
                     .findAll(html).take(30).forEach { match ->
@@ -236,7 +229,12 @@ class JavRider : AnimeHttpSource() {
                                 .find(decoded)?.value?.let { url ->
                                     if (videos.none { it.url == url }) {
                                         videos.add(
-                                            Video(url, "Servidor B64", url, videoHeadersFor(iframeUrl)),
+                                            Video(
+                                                url,
+                                                "Servidor B64",
+                                                url,
+                                                videoHeadersFor(iframeUrl),
+                                            ),
                                         )
                                     }
                                 }
