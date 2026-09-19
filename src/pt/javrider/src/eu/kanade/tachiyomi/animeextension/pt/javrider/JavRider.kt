@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
@@ -180,12 +181,8 @@ class JavRider : AnimeHttpSource() {
                 it.attr("src").ifEmpty { it.attr("data-lazy-src") }
             }.orEmpty()
 
-            Log.e("JavRider", "VIDEO referer=$referer iframe=$iframeSrc")
-
             if (iframeSrc.startsWith("http")) {
                 videos.addAll(extractFromPlayer(iframeSrc, referer))
-            } else {
-                Log.e("JavRider", "VIDEO iframe não encontrado!")
             }
         } catch (e: Exception) {
             Log.e("JavRider", "VIDEO erro: ${e.message}", e)
@@ -206,11 +203,7 @@ class JavRider : AnimeHttpSource() {
         val videos = mutableListOf<Video>()
         val hash = Regex("""/video/([a-f0-9]{16,})""")
             .find(iframeUrl)?.groupValues?.get(1)
-        if (hash == null) {
-            Log.e("JavRider", "PLAYER hash não encontrado em $iframeUrl")
-            return videos
-        }
-        Log.e("JavRider", "PLAYER hash=$hash")
+            ?: return videos
 
         // Passo 1: visitar iframe (popula cookies)
         try {
@@ -219,14 +212,13 @@ class JavRider : AnimeHttpSource() {
                 .headers(playerPageHeaders(referer))
                 .build()
             client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
-        } catch (e: Exception) {
-            Log.e("JavRider", "PLAYER iframe visit erro: ${e.message}")
+        } catch (_: Exception) {
+            // segue
         }
 
         // Passo 2: API getVideo
         val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
         val body = tryApiGet(apiUrl, iframeUrl)
-        Log.e("JavRider", "PLAYER api[${body.length}]=${body.take(800)}")
         if (body.isBlank()) return videos
 
         // Passo 3: extrai securedLink + videoSource
@@ -254,30 +246,60 @@ class JavRider : AnimeHttpSource() {
                 .find(normalized)?.groupValues?.get(1)
         }
 
-        Log.e("JavRider", "PLAYER secured=$secured")
-        Log.e("JavRider", "PLAYER source=$source")
-
         val usedUrl = secured ?: source
-        if (usedUrl == null) {
-            Log.e("JavRider", "PLAYER nenhum link encontrado no body")
-            return videos
-        }
+        if (usedUrl == null) return videos
 
-        // Passo 4: parseia m3u8 master
+        // Passo 4: extrai legendas SRT
+        val subtitles = extractSubtitles(normalized)
+
+        // Passo 5: parseia m3u8 master
         val masterBody = tryApiGet(usedUrl, "https://javplayers.com/")
-        Log.e("JavRider", "PLAYER master[${masterBody.length}]=${masterBody.take(600)}")
-
         val variants = parseM3u8Master(masterBody, usedUrl)
+
         if (variants.isNotEmpty()) {
             variants.forEach { (label, url) ->
-                videos.add(Video(url, label, url, videoHeadersFor(iframeUrl)))
+                videos.add(Video(url, label, url, videoHeadersFor(iframeUrl), subtitleTracks = subtitles))
             }
-            Log.e("JavRider", "PLAYER variants=${variants.size}")
         } else {
-            Log.e("JavRider", "PLAYER sem variantes, usando master direto")
-            videos.add(Video(usedUrl, "Auto", usedUrl, videoHeadersFor(iframeUrl)))
+            videos.add(Video(usedUrl, "Auto", usedUrl, videoHeadersFor(iframeUrl), subtitleTracks = subtitles))
         }
         return videos
+    }
+
+    /** Procura URLs de legendas (.srt ou /Subtitle/) no corpo da resposta. */
+    private fun extractSubtitles(body: String): List<Track> {
+        val tracks = mutableListOf<Track>()
+        val seen = mutableSetOf<String>()
+
+        // 1) Padrão completo: https://.../Subtitle/....srt
+        Regex("""https?://[^"'\s]+/Subtitle/[^"'\s]+\.srt""")
+            .findAll(body).forEach { match ->
+                val url = match.value
+                if (seen.add(url)) tracks.add(Track(url, "Português"))
+            }
+
+        // 2) URLs .srt soltas
+        if (tracks.isEmpty()) {
+            Regex("""https?://[^"'\s]+\.srt""")
+                .findAll(body).forEach { match ->
+                    val url = match.value
+                    if (seen.add(url)) tracks.add(Track(url, "Português"))
+                }
+        }
+
+        // 3) Caminhos relativos /Subtitle/....srt (constrói a URL base)
+        if (tracks.isEmpty()) {
+            Regex("""(/Subtitle/[^"'\s]+\.srt)""")
+                .findAll(body).forEach { match ->
+                    val path = match.groupValues[1]
+                    val base = "https://trk6tu.akmicdn.com"
+                    val url = "$base$path"
+                    if (seen.add(url)) tracks.add(Track(url, "Português"))
+                }
+        }
+
+        Log.e("JavRider", "SUBS found=${tracks.size}")
+        return tracks
     }
 
     private fun parseM3u8Master(body: String, masterUrl: String): List<Pair<String, String>> {
