@@ -9,7 +9,9 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import okhttp3.Headers
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
@@ -207,70 +209,104 @@ class JavRider : AnimeHttpSource() {
             .find(iframeUrl)?.groupValues?.get(1)
             ?: return videos
 
+        // Passo 1: visitar a página do iframe (pra popular cookies no CookieJar do OkHttp)
+        try {
+            val pageReq = Request.Builder()
+                .url(iframeUrl)
+                .headers(playerPageHeaders(referer))
+                .build()
+            client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
+            Log.e("JavRider", "Iframe visitado (cookies)")
+        } catch (e: Exception) {
+            Log.e("JavRider", "Iframe erro: ${e.message}")
+        }
+
         val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
 
-        try {
-            val req = Request.Builder()
-                .url(apiUrl)
-                .headers(apiHeadersFor(iframeUrl))
-                .build()
-            val body = client.newCall(req).execute().use { it.body?.string().orEmpty() }
-            if (body.isBlank()) return videos
+        // Passo 2: GET
+        var body = tryApiGet(apiUrl, iframeUrl)
+        Log.e("JavRider", "GET body[${body.length}]=${body.take(1500).replace("\n", "\\n")}")
 
-            Log.e("JavRider", "API body[${body.length}]=${body.take(600).replace("\n", "\\n")}")
-
-            // 1) Tenta JSON puro
-            var secured: String? = null
-            var source: String? = null
-            try {
-                val json = JSONObject(body)
-                secured = json.optString("securedLink", "").takeIf { it.startsWith("http") }
-                source = json.optString("videoSource", "").takeIf { it.startsWith("http") }
-            } catch (_: Exception) {
-                // não é JSON puro, tenta regex
+        // Passo 3: se veio HTML curto/vazio, tenta POST
+        if (body.length < 500 || !body.contains("securedLink", true)) {
+            val postBody = "data=$hash&do=getVideo"
+                .toRequestBody("application/x-www-form-urlencoded".toMediaType())
+            val postResp = tryApiPost(apiUrl, iframeUrl, postBody)
+            Log.e("JavRider", "POST body[${postResp.length}]=${postResp.take(1500).replace("\n", "\\n")}")
+            if (postResp.contains("securedLink", true) || postResp.length > body.length) {
+                body = postResp
             }
-
-            // 2) Fallback regex sobre o body (JSON embutido em HTML/script)
-            val normalized = body.replace("\\/", "/")
-            if (secured == null) {
-                secured = Regex(""""securedLink"\s*:\s*"([^"]+)"""")
-                    .find(normalized)?.groupValues?.get(1)
-                    ?.takeIf { it.startsWith("http") }
-            }
-            if (source == null) {
-                source = Regex(""""videoSource"\s*:\s*"([^"]+)"""")
-                    .find(normalized)?.groupValues?.get(1)
-                    ?.takeIf { it.startsWith("http") }
-            }
-            if (secured == null) {
-                secured = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""")
-                    .find(normalized)?.groupValues?.get(1)
-                    ?.takeIf { it.startsWith("http") }
-            }
-            if (source == null) {
-                source = Regex("""src\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""")
-                    .find(normalized)?.groupValues?.get(1)
-                    ?.takeIf { it.startsWith("http") }
-            }
-
-            // 3) Fallback final: /m3/ no body
-            if (secured == null && source == null) {
-                val m3 = Regex("""https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+""")
-                    .find(normalized)?.value
-                if (m3 != null) secured = m3
-            }
-
-            if (secured != null) {
-                videos.add(Video(secured, "Principal", secured, videoHeadersFor(iframeUrl)))
-            }
-            if (source != null && source != secured) {
-                videos.add(Video(source, "Alternativo", source, videoHeadersFor(iframeUrl)))
-            }
-        } catch (e: Exception) {
-            Log.e("JavRider", "API erro: ${e.message}", e)
         }
+
+        // Extração: tenta JSON puro, depois regex
+        val normalized = body.replace("\\/", "/").replace("\\u002F", "/")
+        var secured: String? = null
+        var source: String? = null
+
+        try {
+            val json = JSONObject(normalized)
+            secured = json.optString("securedLink", "").takeIf { it.startsWith("http") }
+            source = json.optString("videoSource", "").takeIf { it.startsWith("http") }
+        } catch (_: Exception) {
+            // não é JSON puro
+        }
+
+        if (secured == null) {
+            secured = Regex(""""securedLink"\s*:\s*"([^"]+)"""")
+                .find(normalized)?.groupValues?.get(1)
+                ?.takeIf { it.startsWith("http") }
+        }
+        if (source == null) {
+            source = Regex(""""videoSource"\s*:\s*"([^"]+)"""")
+                .find(normalized)?.groupValues?.get(1)
+                ?.takeIf { it.startsWith("http") }
+        }
+        if (secured == null) {
+            secured = Regex("""(https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+)""")
+                .find(normalized)?.groupValues?.get(1)
+        }
+        if (secured == null) {
+            secured = Regex("""["']([^"']*master\.m3u8[^"']*)["']""")
+                .find(normalized)?.groupValues?.get(1)
+                ?.let { if (it.startsWith("http")) it else "https://javplayers.com$it" }
+        }
+
+        if (secured != null) {
+            videos.add(Video(secured, "Principal", secured, videoHeadersFor(iframeUrl)))
+        }
+        if (source != null && source != secured) {
+            videos.add(Video(source, "Alternativo", source, videoHeadersFor(iframeUrl)))
+        }
+
         return videos
     }
+
+    private fun tryApiGet(url: String, referer: String): String = try {
+        val req = Request.Builder().url(url).headers(apiHeadersFor(referer)).build()
+        client.newCall(req).execute().use { it.body?.string().orEmpty() }
+    } catch (e: Exception) {
+        Log.e("JavRider", "GET erro: ${e.message}")
+        ""
+    }
+
+    private fun tryApiPost(url: String, referer: String, body: okhttp3.RequestBody): String = try {
+        val req = Request.Builder()
+            .url(url)
+            .headers(apiHeadersFor(referer))
+            .post(body)
+            .build()
+        client.newCall(req).execute().use { it.body?.string().orEmpty() }
+    } catch (e: Exception) {
+        Log.e("JavRider", "POST erro: ${e.message}")
+        ""
+    }
+
+    private fun playerPageHeaders(referer: String): Headers = Headers.Builder()
+        .add("User-Agent", desktopUa)
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
+        .add("Referer", referer)
+        .build()
 
     private fun apiHeadersFor(referer: String): Headers = Headers.Builder()
         .add("User-Agent", desktopUa)
