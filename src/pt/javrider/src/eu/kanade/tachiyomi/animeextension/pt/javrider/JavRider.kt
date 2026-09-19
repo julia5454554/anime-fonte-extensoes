@@ -31,10 +31,6 @@ class JavRider : AnimeHttpSource() {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-    private val mobileUa =
-        "Mozilla/5.0 (Linux; Android 13; 23049PCD8G) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-
     private val apiHeaders: Headers by lazy {
         headers.newBuilder()
             .add("Accept", "application/json, text/plain, */*")
@@ -180,8 +176,6 @@ class JavRider : AnimeHttpSource() {
                 it.attr("src").ifEmpty { it.attr("data-lazy-src") }
             }.orEmpty()
 
-            Log.e("JavRider", "VIDEO referer=$referer iframeSrc=$iframeSrc")
-
             if (iframeSrc.startsWith("http")) {
                 videos.addAll(extractFromPlayer(iframeSrc, referer))
             }
@@ -209,101 +203,77 @@ class JavRider : AnimeHttpSource() {
 
     private fun extractFromPlayer(iframeUrl: String, referer: String): List<Video> {
         val videos = mutableListOf<Video>()
-        val diag = StringBuilder()
         val hash = Regex("""/video/([a-f0-9]{16,})""")
             .find(iframeUrl)?.groupValues?.get(1)
-        if (hash == null) {
-            Log.e("JavRider", "PLAYER hash não achado em $iframeUrl")
-            return videos
-        }
-        diag.append("hash=$hash; ")
+            ?: return videos
 
-        // Passo 1: visitar a página do iframe (cookies)
-        var pageHtml = ""
+        val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
+
         try {
-            val pageReq = Request.Builder()
-                .url(iframeUrl)
-                .headers(playerPageHeaders(referer, desktopUa))
+            val req = Request.Builder()
+                .url(apiUrl)
+                .headers(apiHeadersFor(iframeUrl))
                 .build()
-            pageHtml = client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
-            diag.append("pageLen=${pageHtml.length}; ")
+            val body = client.newCall(req).execute().use { it.body?.string().orEmpty() }
+            if (body.isBlank()) return videos
+
+            Log.e("JavRider", "API body[${body.length}]=${body.take(600).replace("\n", "\\n")}")
+
+            // 1) Tenta JSON puro
+            var secured: String? = null
+            var source: String? = null
+            try {
+                val json = JSONObject(body)
+                secured = json.optString("securedLink", "").takeIf { it.startsWith("http") }
+                source = json.optString("videoSource", "").takeIf { it.startsWith("http") }
+            } catch (_: Exception) {
+                // não é JSON puro, tenta regex
+            }
+
+            // 2) Fallback regex sobre o body (JSON embutido em HTML/script)
+            val normalized = body.replace("\\/", "/")
+            if (secured == null) {
+                secured = Regex(""""securedLink"\s*:\s*"([^"]+)"""")
+                    .find(normalized)?.groupValues?.get(1)
+                    ?.takeIf { it.startsWith("http") }
+            }
+            if (source == null) {
+                source = Regex(""""videoSource"\s*:\s*"([^"]+)"""")
+                    .find(normalized)?.groupValues?.get(1)
+                    ?.takeIf { it.startsWith("http") }
+            }
+            if (secured == null) {
+                secured = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""")
+                    .find(normalized)?.groupValues?.get(1)
+                    ?.takeIf { it.startsWith("http") }
+            }
+            if (source == null) {
+                source = Regex("""src\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']""")
+                    .find(normalized)?.groupValues?.get(1)
+                    ?.takeIf { it.startsWith("http") }
+            }
+
+            // 3) Fallback final: /m3/ no body
+            if (secured == null && source == null) {
+                val m3 = Regex("""https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+""")
+                    .find(normalized)?.value
+                if (m3 != null) secured = m3
+            }
+
+            if (secured != null) {
+                videos.add(Video(secured, "Principal", secured, videoHeadersFor(iframeUrl)))
+            }
+            if (source != null && source != secured) {
+                videos.add(Video(source, "Alternativo", source, videoHeadersFor(iframeUrl)))
+            }
         } catch (e: Exception) {
-            diag.append("pageErr=${e.message}; ")
+            Log.e("JavRider", "API erro: ${e.message}", e)
         }
-
-        // Passo 2: tentar achar a API no HTML da página do iframe
-        val apiCandidates = mutableListOf<String>()
-        Regex("""["']([^"']*player/index\.php[^"']*)["']""")
-            .findAll(pageHtml).forEach { m ->
-                val raw = m.groupValues[1]
-                val abs = when {
-                    raw.startsWith("http") -> raw
-                    raw.startsWith("/") -> "https://javplayers.com$raw"
-                    else -> "https://javplayers.com/$raw"
-                }
-                apiCandidates.add(abs)
-            }
-        // URL canônica baseada no hash (a que o DevTools mostrou)
-        apiCandidates.add("https://javplayers.com/player/index.php?data=$hash&do=getVideo")
-
-        val referers = listOf(iframeUrl, "https://javplayers.com/", referer)
-        val uas = listOf(desktopUa, mobileUa)
-
-        outer@ for (ua in uas) {
-            for (ref in referers) {
-                for (apiUrl in apiCandidates.distinct()) {
-                    try {
-                        val req = Request.Builder()
-                            .url(apiUrl)
-                            .headers(apiHeadersFor(ref, ua))
-                            .build()
-                        val resp = client.newCall(req).execute()
-                        val code = resp.code
-                        val body = resp.body?.string().orEmpty()
-                        diag.append("api[$code/${body.length}]; ")
-                        if (body.isBlank()) continue
-                        val json = JSONObject(body)
-                        val secured = json.optString("securedLink", "")
-                            .takeIf { it.startsWith("http") }
-                        val source = json.optString("videoSource", "")
-                            .takeIf { it.startsWith("http") }
-                        if (secured != null) {
-                            videos.add(Video(secured, "Principal", secured, videoHeadersFor(iframeUrl)))
-                        }
-                        if (source != null) {
-                            videos.add(Video(source, "Alternativo", source, videoHeadersFor(iframeUrl)))
-                        }
-                        if (videos.isNotEmpty()) break@outer
-                    } catch (e: Exception) {
-                        diag.append("apiErr=${e.message}; ")
-                    }
-                }
-            }
-        }
-
-        // Passo 3: fallback /m3/ no HTML
-        if (videos.isEmpty() && pageHtml.isNotEmpty()) {
-            Regex("""https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+""")
-                .findAll(pageHtml).map { it.value }.distinct()
-                .forEachIndexed { i, url ->
-                    videos.add(Video(url, "Servidor ${i + 1}", url, videoHeadersFor(iframeUrl)))
-                }
-            diag.append("m3=${videos.size}; ")
-        }
-
-        Log.e("JavRider", "PLAYER diag=$diag total=${videos.size}")
         return videos
     }
 
-    private fun playerPageHeaders(referer: String, ua: String): Headers = Headers.Builder()
-        .add("User-Agent", ua)
-        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
-        .add("Referer", referer)
-        .build()
-
-    private fun apiHeadersFor(referer: String, ua: String): Headers = Headers.Builder()
-        .add("User-Agent", ua)
+    private fun apiHeadersFor(referer: String): Headers = Headers.Builder()
+        .add("User-Agent", desktopUa)
         .add("Accept", "application/json, text/javascript, */*; q=0.01")
         .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
         .add("Referer", referer)
