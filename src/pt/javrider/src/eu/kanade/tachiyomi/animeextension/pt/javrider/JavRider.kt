@@ -11,8 +11,8 @@ import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
-import okio.ByteString.Companion.decodeBase64
 import org.json.JSONArray
+import org.json.JSONObject
 import java.net.URLEncoder
 
 class JavRider : AnimeHttpSource() {
@@ -179,73 +179,44 @@ class JavRider : AnimeHttpSource() {
     private fun extractFromPlayer(iframeUrl: String, referer: String): List<Video> {
         val videos = mutableListOf<Video>()
         try {
-            val reqHeaders = Headers.Builder()
-                .add("User-Agent", desktopUa)
-                .add(
-                    "Accept",
-                    "text/html,application/xhtml+xml,application/xml;q=0.9," +
-                        "image/avif,image/webp,*/*;q=0.8",
-                )
-                .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
-                .add("Referer", referer)
-                .add("Sec-Fetch-Dest", "iframe")
-                .add("Sec-Fetch-Mode", "navigate")
-                .add("Sec-Fetch-Site", "cross-site")
-                .add("Upgrade-Insecure-Requests", "1")
+            // hash do iframe: /video/{hash}
+            val hash = Regex("""/video/([a-f0-9]{16,})""")
+                .find(iframeUrl)?.groupValues?.get(1)
+                ?: return videos
+
+            // endpoint real: /player/index.php?data={hash}&do=getVideo
+            val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
+
+            val req = Request.Builder()
+                .url(apiUrl)
+                .headers(apiHeadersFor(iframeUrl))
                 .build()
 
-            val req = Request.Builder().url(iframeUrl).headers(reqHeaders).build()
-            val rawHtml = client.newCall(req).execute().use { it.body!!.string() }
+            val jsonBody = client.newCall(req).execute().use { it.body!!.string() }
+            val json = JSONObject(jsonBody)
 
-            val html = rawHtml
-                .replace("\\/", "/")
-                .replace("\\u002F", "/")
-                .replace("\\u002f", "/")
-                .replace("\\u0026", "&")
-                .replace("&amp;", "&")
+            val secured = json.optString("securedLink", "")
+                .takeIf { it.startsWith("http") }
+            val source = json.optString("videoSource", "")
+                .takeIf { it.startsWith("http") }
 
-            Regex("""https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+""")
-                .findAll(html).map { it.value }.distinct()
-                .forEachIndexed { i, url ->
-                    videos.add(Video(url, "Servidor ${i + 1}", url, videoHeadersFor(iframeUrl)))
-                }
-
-            if (videos.isEmpty()) {
-                Regex("""https?://[^"'\s\\<>]+\.(?:m3u8|mp4)[^"'\s\\<>]*""")
-                    .findAll(html).map { it.value }.distinct()
-                    .forEachIndexed { i, url ->
-                        videos.add(
-                            Video(url, "Servidor ${i + 1}", url, videoHeadersFor(iframeUrl)),
-                        )
-                    }
+            if (secured != null) {
+                videos.add(Video(secured, "Servidor Principal", secured, videoHeadersFor(iframeUrl)))
             }
-
-            if (videos.isEmpty()) {
-                Regex("""[A-Za-z0-9+/]{60,}={0,2}""")
-                    .findAll(html).take(30).forEach { match ->
-                        try {
-                            val decoded = match.value.decodeBase64()?.utf8() ?: return@forEach
-                            Regex("""https?://[^"'\s\\<>]+""")
-                                .find(decoded)?.value?.let { url ->
-                                    if (videos.none { it.url == url }) {
-                                        videos.add(
-                                            Video(
-                                                url,
-                                                "Servidor B64",
-                                                url,
-                                                videoHeadersFor(iframeUrl),
-                                            ),
-                                        )
-                                    }
-                                }
-                        } catch (_: Exception) {
-                            // ignora base64 inválido
-                        }
-                    }
+            if (source != null) {
+                videos.add(Video(source, "Servidor Alternativo", source, videoHeadersFor(iframeUrl)))
             }
         } catch (_: Exception) {
             // silencioso
         }
         return videos
     }
+
+    private fun apiHeadersFor(referer: String): Headers = Headers.Builder()
+        .add("User-Agent", desktopUa)
+        .add("Accept", "application/json, text/javascript, */*; q=0.01")
+        .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
+        .add("Referer", referer)
+        .add("X-Requested-With", "XMLHttpRequest")
+        .build()
 }
