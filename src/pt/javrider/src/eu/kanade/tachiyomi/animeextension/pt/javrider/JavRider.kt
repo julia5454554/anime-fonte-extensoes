@@ -49,6 +49,20 @@ class JavRider : AnimeHttpSource() {
             .build()
     }
 
+    // ==================== HELPERS DE URL ====================
+
+    private fun extractSlug(url: String): String {
+        val cleaned = url.trim().trimEnd('/').substringBefore("?").substringBefore("#")
+        return cleaned.substringAfterLast("/")
+    }
+
+    private fun buildUrl(slug: String): String = "$baseUrl/pt/$slug/"
+
+    private fun resolveUrl(rawUrl: String): String {
+        val slug = extractSlug(rawUrl)
+        return if (slug.isNotEmpty()) buildUrl(slug) else rawUrl
+    }
+
     // ==================== LISTAGEM ====================
 
     override fun popularAnimeRequest(page: Int): Request {
@@ -82,12 +96,8 @@ class JavRider : AnimeHttpSource() {
             for (i in 0 until json.length()) {
                 val post = json.getJSONObject(i)
                 val slug = post.optString("slug", "")
-                val apiLink = post.optString("link", "")
-                val realUrl = when {
-                    slug.isNotEmpty() -> "$baseUrl/pt/$slug/"
-                    apiLink.startsWith("http") -> apiLink
-                    else -> apiLink
-                }
+                val realUrl = if (slug.isNotEmpty()) buildUrl(slug) else ""
+
                 val thumb = post.optJSONObject("_embedded")
                     ?.optJSONArray("wp:featuredmedia")
                     ?.optJSONObject(0)
@@ -100,7 +110,7 @@ class JavRider : AnimeHttpSource() {
                     url = realUrl
                     thumbnail_url = thumb
                 }
-                list.add(anime)
+                if (realUrl.isNotEmpty()) list.add(anime)
             }
             AnimesPage(list, json.length() == 24)
         } catch (_: Exception) {
@@ -111,7 +121,7 @@ class JavRider : AnimeHttpSource() {
     // ==================== DETALHES ====================
 
     override fun animeDetailsRequest(anime: SAnime): Request {
-        val url = anime.url.takeIf { it.startsWith("http") } ?: "$baseUrl${anime.url}"
+        val url = resolveUrl(anime.url)
         return GET(url, apiHeaders)
     }
 
@@ -137,16 +147,28 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== EPISÓDIOS ====================
 
+    override fun episodeListRequest(anime: SAnime): Request {
+        val url = resolveUrl(anime.url)
+        return GET(url, apiHeaders)
+    }
+
     override fun episodeListParse(response: Response): List<SEpisode> {
+        val rawUrl = response.request.url.toString()
+        val cleanUrl = resolveUrl(rawUrl)
         val ep = SEpisode.create().apply {
             name = "Vídeo Completo"
-            url = response.request.url.toString()
+            url = cleanUrl
             episode_number = 1f
         }
         return listOf(ep)
     }
 
     // ==================== VÍDEO ====================
+
+    override fun videoListRequest(episode: SEpisode): Request {
+        val url = resolveUrl(episode.url)
+        return GET(url, apiHeaders)
+    }
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
