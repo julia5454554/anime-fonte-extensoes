@@ -1,11 +1,11 @@
 package eu.kanade.tachiyomi.animeextension.pt.javrider
 
-import eu.kanade.tachiyomi.animesource.AnimeHttpSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
@@ -26,7 +26,6 @@ class JavRider : AnimeHttpSource() {
     private val fields = "id,title,link,_embedded"
     private val embedParam = "wp:featuredmedia"
 
-    // headers customizados derivados do headers base (que é final na base)
     private val apiHeaders: Headers by lazy {
         headers.newBuilder()
             .add("Accept", "application/json, text/plain, */*")
