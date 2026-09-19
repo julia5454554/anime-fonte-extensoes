@@ -7,12 +7,13 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
 class JavRider : AnimeHttpSource() {
@@ -37,7 +38,17 @@ class JavRider : AnimeHttpSource() {
             .build()
     }
 
-    // ==================== HELPERS DE URL ====================
+    // ==================== HELPERS ====================
+
+    private fun safeBody(response: Response): String =
+        try {
+            response.body?.string().orEmpty()
+        } catch (_: Exception) {
+            ""
+        }
+
+    private fun safeDocument(response: Response): Document =
+        Jsoup.parse(safeBody(response), response.request.url.toString())
 
     private fun extractSlug(url: String): String {
         val cleaned = url.trim().trimEnd('/').substringBefore("?").substringBefore("#")
@@ -48,7 +59,12 @@ class JavRider : AnimeHttpSource() {
 
     private fun resolveUrl(rawUrl: String): String {
         val slug = extractSlug(rawUrl)
-        return if (slug.isNotEmpty()) buildUrl(slug) else rawUrl
+        return if (slug.isNotEmpty() && !slug.contains(":")) buildUrl(slug) else rawUrl
+    }
+
+    private fun responseUrlOrDefault(response: Response): String {
+        val fromResponse = response.request.url.toString()
+        return if (fromResponse.startsWith("http")) fromResponse else baseUrl
     }
 
     // ==================== LISTAGEM ====================
@@ -77,7 +93,8 @@ class JavRider : AnimeHttpSource() {
     override fun searchAnimeParse(response: Response): AnimesPage = parsePosts(response)
 
     private fun parsePosts(response: Response): AnimesPage {
-        val body = response.body!!.string()
+        val body = safeBody(response)
+        if (body.isBlank()) return AnimesPage(emptyList(), false)
         return try {
             val json = JSONArray(body)
             val list = ArrayList<SAnime>(json.length())
@@ -109,20 +126,25 @@ class JavRider : AnimeHttpSource() {
     override fun animeDetailsRequest(anime: SAnime): Request = GET(resolveUrl(anime.url), apiHeaders)
 
     override fun animeDetailsParse(response: Response): SAnime {
-        val document = response.asJsoup()
         val anime = SAnime.create()
-        anime.title = document.selectFirst("h1.entry-title")?.text()?.trim().orEmpty()
-        anime.thumbnail_url = document.selectFirst("meta[property=og:image]")
-            ?.attr("content")?.takeIf { it.startsWith("http") }
-        anime.genre = document.select("a.category-item").joinToString(", ") { it.text() }
-            .takeIf { it.isNotEmpty() }
-        val content = document.selectFirst("div.entry-content")
-        if (content != null) {
-            content.select("div.code-block, script, style").remove()
-            anime.description = content.text().trim().take(1500).takeIf { it.isNotEmpty() }
+        try {
+            val document = safeDocument(response)
+            anime.title = document.selectFirst("h1.entry-title")?.text()?.trim().orEmpty()
+            anime.thumbnail_url = document.selectFirst("meta[property=og:image]")
+                ?.attr("content")?.takeIf { it.startsWith("http") }
+            anime.genre = document.select("a.category-item").joinToString(", ") { it.text() }
+                .takeIf { it.isNotEmpty() }
+            val content = document.selectFirst("div.entry-content")
+            if (content != null) {
+                content.select("div.code-block, script, style").remove()
+                anime.description = content.text().trim().take(1500).takeIf { it.isNotEmpty() }
+            }
+            anime.author = document.selectFirst("li:contains(Estúdio) a")?.text()
+            anime.status = SAnime.COMPLETED
+        } catch (_: Exception) {
+            // retorna anime vazio mas válido
         }
-        anime.author = document.selectFirst("li:contains(Estúdio) a")?.text()
-        anime.status = SAnime.COMPLETED
+        if (anime.title.isNullOrBlank()) anime.title = "JavRider"
         return anime
     }
 
@@ -131,9 +153,10 @@ class JavRider : AnimeHttpSource() {
     override fun episodeListRequest(anime: SAnime): Request = GET(resolveUrl(anime.url), apiHeaders)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
+        val url = responseUrlOrDefault(response)
         val ep = SEpisode.create().apply {
             name = "Vídeo Completo"
-            url = resolveUrl(response.request.url.toString())
+            this.url = url
             episode_number = 1f
         }
         return listOf(ep)
@@ -141,34 +164,37 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== VÍDEO ====================
 
-    override fun videoListRequest(episode: SEpisode): Request = GET(resolveUrl(episode.url), apiHeaders)
+    override fun videoListRequest(episode: SEpisode): Request =
+        GET(resolveUrl(episode.url), apiHeaders)
 
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
-        val referer = response.request.url.toString()
         val videos = mutableListOf<Video>()
+        val referer = responseUrlOrDefault(response)
+        try {
+            val document = safeDocument(response)
+            val iframe = document.selectFirst("div.player-3rdparty iframe, iframe[src*=javplayers]")
+                ?: document.selectFirst("iframe[src]")
+            val iframeSrc = iframe?.let {
+                it.attr("src").ifEmpty { it.attr("data-lazy-src") }
+            }.orEmpty()
 
-        val iframe = document.selectFirst("div.player-3rdparty iframe, iframe[src*=javplayers]")
-            ?: document.selectFirst("iframe[src]")
-        val iframeSrc = iframe?.let {
-            it.attr("src").ifEmpty { it.attr("data-lazy-src") }
-        }.orEmpty()
-
-        if (iframeSrc.startsWith("http")) {
-            videos.addAll(extractFromPlayer(iframeSrc, referer))
-        }
-
-        document.select("video, video source").forEach { el ->
-            val src = el.attr("src").ifEmpty { el.attr("data-src") }
-            if (src.startsWith("http") && videos.none { it.url == src }) {
-                videos.add(Video(src, "Direto", src, videoHeadersFor(referer)))
+            if (iframeSrc.startsWith("http")) {
+                videos.addAll(extractFromPlayer(iframeSrc, referer))
             }
-        }
 
+            document.select("video, video source").forEach { el ->
+                val src = el.attr("src").ifEmpty { el.attr("data-src") }
+                if (src.startsWith("http") && videos.none { it.url == src }) {
+                    videos.add(Video(src, "Direto", src, videoHeadersFor(referer)))
+                }
+            }
+        } catch (_: Exception) {
+            // retorna o que já tiver
+        }
         return videos
     }
 
-    private fun videoHeadersFor(referer: String): Headers = headers.newBuilder()
+    private fun videoHeadersFor(referer: String): Headers = Headers.Builder()
         .add("User-Agent", desktopUa)
         .add("Referer", referer)
         .add("Origin", "https://javplayers.com")
@@ -179,12 +205,10 @@ class JavRider : AnimeHttpSource() {
     private fun extractFromPlayer(iframeUrl: String, referer: String): List<Video> {
         val videos = mutableListOf<Video>()
         try {
-            // hash do iframe: /video/{hash}
             val hash = Regex("""/video/([a-f0-9]{16,})""")
                 .find(iframeUrl)?.groupValues?.get(1)
                 ?: return videos
 
-            // endpoint real: /player/index.php?data={hash}&do=getVideo
             val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
 
             val req = Request.Builder()
@@ -192,9 +216,10 @@ class JavRider : AnimeHttpSource() {
                 .headers(apiHeadersFor(iframeUrl))
                 .build()
 
-            val jsonBody = client.newCall(req).execute().use { it.body!!.string() }
-            val json = JSONObject(jsonBody)
+            val body = client.newCall(req).execute().use { it.body?.string().orEmpty() }
+            if (body.isBlank()) return videos
 
+            val json = JSONObject(body)
             val secured = json.optString("securedLink", "")
                 .takeIf { it.startsWith("http") }
             val source = json.optString("videoSource", "")
