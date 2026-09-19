@@ -40,15 +40,13 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== HELPERS ====================
 
-    private fun safeBody(response: Response): String =
-        try {
-            response.body?.string().orEmpty()
-        } catch (_: Exception) {
-            ""
-        }
+    private fun safeBody(response: Response): String = try {
+        response.body?.string().orEmpty()
+    } catch (_: Exception) {
+        ""
+    }
 
-    private fun safeDocument(response: Response): Document =
-        Jsoup.parse(safeBody(response), response.request.url.toString())
+    private fun safeDocument(response: Response): Document = Jsoup.parse(safeBody(response), response.request.url.toString())
 
     private fun extractSlug(url: String): String {
         val cleaned = url.trim().trimEnd('/').substringBefore("?").substringBefore("#")
@@ -164,8 +162,7 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== VÍDEO ====================
 
-    override fun videoListRequest(episode: SEpisode): Request =
-        GET(resolveUrl(episode.url), apiHeaders)
+    override fun videoListRequest(episode: SEpisode): Request = GET(resolveUrl(episode.url), apiHeaders)
 
     override fun videoListParse(response: Response): List<Video> {
         val videos = mutableListOf<Video>()
