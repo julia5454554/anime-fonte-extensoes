@@ -201,38 +201,77 @@ class JavRider : AnimeHttpSource() {
 
     private fun extractFromPlayer(iframeUrl: String, referer: String): List<Video> {
         val videos = mutableListOf<Video>()
+        val hash = Regex("""/video/([a-f0-9]{16,})""")
+            .find(iframeUrl)?.groupValues?.get(1)
+            ?: return videos
+
+        // Passo 1: visita a página do iframe pra popular cookies no CookieJar
         try {
-            val hash = Regex("""/video/([a-f0-9]{16,})""")
-                .find(iframeUrl)?.groupValues?.get(1)
-                ?: return videos
-
-            val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
-
-            val req = Request.Builder()
-                .url(apiUrl)
-                .headers(apiHeadersFor(iframeUrl))
+            val pageReq = Request.Builder()
+                .url(iframeUrl)
+                .headers(playerPageHeaders(referer))
                 .build()
-
-            val body = client.newCall(req).execute().use { it.body?.string().orEmpty() }
-            if (body.isBlank()) return videos
-
-            val json = JSONObject(body)
-            val secured = json.optString("securedLink", "")
-                .takeIf { it.startsWith("http") }
-            val source = json.optString("videoSource", "")
-                .takeIf { it.startsWith("http") }
-
-            if (secured != null) {
-                videos.add(Video(secured, "Servidor Principal", secured, videoHeadersFor(iframeUrl)))
-            }
-            if (source != null) {
-                videos.add(Video(source, "Servidor Alternativo", source, videoHeadersFor(iframeUrl)))
-            }
+            client.newCall(pageReq).execute().close()
         } catch (_: Exception) {
-            // silencioso
+            // segue mesmo assim
         }
+
+        // Passo 2: chama a API com Referer = iframe URL
+        val apiBase = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
+        val apiReferers = listOf(iframeUrl, "https://javplayers.com/", referer)
+
+        for (ref in apiReferers) {
+            if (videos.isNotEmpty()) break
+            try {
+                val req = Request.Builder()
+                    .url(apiBase)
+                    .headers(apiHeadersFor(ref))
+                    .build()
+                val body = client.newCall(req).execute().use { it.body?.string().orEmpty() }
+                if (body.isBlank()) continue
+
+                val json = JSONObject(body)
+                val secured = json.optString("securedLink", "").takeIf { it.startsWith("http") }
+                val source = json.optString("videoSource", "").takeIf { it.startsWith("http") }
+
+                if (secured != null) {
+                    videos.add(Video(secured, "Servidor Principal", secured, videoHeadersFor(iframeUrl)))
+                }
+                if (source != null) {
+                    videos.add(Video(source, "Servidor Alternativo", source, videoHeadersFor(iframeUrl)))
+                }
+            } catch (_: Exception) {
+                // tenta próximo referer
+            }
+        }
+
+        // Fallback 3: m3 regex na página do iframe
+        if (videos.isEmpty()) {
+            try {
+                val pageReq = Request.Builder()
+                    .url(iframeUrl)
+                    .headers(playerPageHeaders(referer))
+                    .build()
+                val html = client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
+                Regex("""https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+""")
+                    .findAll(html).map { it.value }.distinct()
+                    .forEachIndexed { i, url ->
+                        videos.add(Video(url, "Servidor ${i + 1}", url, videoHeadersFor(iframeUrl)))
+                    }
+            } catch (_: Exception) {
+                // silencioso
+            }
+        }
+
         return videos
     }
+
+    private fun playerPageHeaders(referer: String): Headers = Headers.Builder()
+        .add("User-Agent", desktopUa)
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
+        .add("Referer", referer)
+        .build()
 
     private fun apiHeadersFor(referer: String): Headers = Headers.Builder()
         .add("User-Agent", desktopUa)
