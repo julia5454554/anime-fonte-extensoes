@@ -12,7 +12,6 @@ import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
-import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
 class JavRider : AnimeHttpSource() {
@@ -104,7 +103,8 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== DETALHES ====================
 
-    override fun animeDetailsParse(document: Document): SAnime {
+    override fun animeDetailsParse(response: Response): SAnime {
+        val document = response.asJsoup()
         val anime = SAnime.create()
         anime.title = document.selectFirst("h1.entry-title")?.text()?.trim().orEmpty()
         anime.thumbnail_url = document.selectFirst("meta[property=og:image]")
