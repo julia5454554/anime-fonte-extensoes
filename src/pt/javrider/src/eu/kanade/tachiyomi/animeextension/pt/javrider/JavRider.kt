@@ -27,6 +27,9 @@ class JavRider : AnimeHttpSource() {
     private val apiUrl = "$baseUrl/wp-json/wp/v2"
     private val embedParam = "wp:featuredmedia"
 
+    // Categoria "subtitle-pt" no WordPress (visto no HTML: data-cat-id="cat_135")
+    private val ptCategoryId = "135"
+
     private val desktopUa =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -66,29 +69,18 @@ class JavRider : AnimeHttpSource() {
         return if (fromResponse.startsWith("http")) fromResponse else baseUrl
     }
 
-    /** Filtro: só aceita títulos com legenda em português. */
-    private fun isPortuguese(title: String): Boolean {
-        val t = title.lowercase()
-        return t.contains("legendas em português") ||
-            t.contains("legenda em português") ||
-            t.contains("português)") ||
-            t.contains("portuguese subtitle") ||
-            t.contains("(pt)") ||
-            t.contains("(pt-br)")
-    }
-
     // ==================== LISTAGEM ====================
 
     override fun popularAnimeRequest(page: Int): Request {
-        val url = "$apiUrl/posts?per_page=24&page=$page&_embed=$embedParam"
+        val url = "$apiUrl/posts?categories=$ptCategoryId&per_page=24&page=$page&_embed=$embedParam"
         return GET(url, apiHeaders)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage = parsePosts(response)
 
     override fun latestUpdatesRequest(page: Int): Request {
-        val url = "$apiUrl/posts?per_page=24&page=$page&orderby=date&order=desc" +
-            "&_embed=$embedParam"
+        val url = "$apiUrl/posts?categories=$ptCategoryId&per_page=24&page=$page" +
+            "&orderby=date&order=desc&_embed=$embedParam"
         return GET(url, apiHeaders)
     }
 
@@ -96,7 +88,8 @@ class JavRider : AnimeHttpSource() {
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val q = URLEncoder.encode(query, "UTF-8")
-        val url = "$apiUrl/posts?search=$q&per_page=24&page=$page&_embed=$embedParam"
+        val url = "$apiUrl/posts?search=$q&categories=$ptCategoryId&per_page=24&page=$page" +
+            "&_embed=$embedParam"
         return GET(url, apiHeaders)
     }
 
@@ -105,6 +98,7 @@ class JavRider : AnimeHttpSource() {
     private fun parsePosts(response: Response): AnimesPage {
         val body = safeBody(response)
         if (body.isBlank()) return AnimesPage(emptyList(), false)
+        Log.e("JavRider", "LIST url=${response.request.url} len=${body.length}")
         return try {
             val json = JSONArray(body)
             val list = ArrayList<SAnime>(json.length())
@@ -112,8 +106,6 @@ class JavRider : AnimeHttpSource() {
                 val post = json.getJSONObject(i)
                 val title = post.getJSONObject("title").getString("rendered")
                     .replace(Regex("<[^>]+>"), "").trim()
-                if (!isPortuguese(title)) continue
-
                 val slug = post.optString("slug", "")
                 val realUrl = if (slug.isNotEmpty()) buildUrl(slug) else ""
                 val thumb = post.optJSONObject("_embedded")
@@ -129,8 +121,10 @@ class JavRider : AnimeHttpSource() {
                 }
                 if (realUrl.isNotEmpty()) list.add(anime)
             }
+            Log.e("JavRider", "LIST parsed=${list.size} hasNext=${json.length() == 24}")
             AnimesPage(list, json.length() == 24)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e("JavRider", "LIST erro: ${e.message}")
             AnimesPage(emptyList(), false)
         }
     }
@@ -215,7 +209,7 @@ class JavRider : AnimeHttpSource() {
             .find(iframeUrl)?.groupValues?.get(1)
             ?: return videos
 
-        // Passo 1: visitar iframe (popula cookies)
+        // Passo 1: visitar iframe (cookies)
         try {
             val pageReq = Request.Builder()
                 .url(iframeUrl)
@@ -255,7 +249,7 @@ class JavRider : AnimeHttpSource() {
 
         // Passo 4: parseia o m3u8 master pra listar resoluções
         val masterBody = tryApiGet(secured, "https://javplayers.com/")
-        Log.e("JavRider", "master[${masterBody.length}]=${masterBody.take(800)}")
+        Log.e("JavRider", "master[${masterBody.length}]=${masterBody.take(1200)}")
 
         val variants = parseM3u8Master(masterBody, secured)
         if (variants.isNotEmpty()) {
@@ -263,14 +257,12 @@ class JavRider : AnimeHttpSource() {
                 videos.add(Video(url, label, url, videoHeadersFor()))
             }
         } else {
-            // fallback: só o master (o player escolhe a melhor faixa)
+            // fallback: master direto (player escolhe)
             videos.add(Video(secured, "Auto", secured, videoHeadersFor()))
         }
-
         return videos
     }
 
-    /** Devolve lista (label, url) ordenada do maior pro menor. */
     private fun parseM3u8Master(body: String, masterUrl: String): List<Pair<String, String>> {
         val result = mutableListOf<Triple<Int, String, String>>()
         val lines = body.lines()
@@ -280,8 +272,8 @@ class JavRider : AnimeHttpSource() {
             if (line.startsWith("#EXT-X-STREAM-INF:")) {
                 infoLine = line
             } else if (infoLine != null && line.isNotEmpty() && !line.startsWith("#")) {
-                val resMatch = Regex("""RESOLUTION=\d+x(\d+)""").find(infoLine)
-                val height = resMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                val height = Regex("""RESOLUTION=\d+x(\d+)""")
+                    .find(infoLine)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 val label = when {
                     height >= 1080 -> "1080p"
                     height >= 720 -> "720p"
@@ -292,22 +284,17 @@ class JavRider : AnimeHttpSource() {
                 }
                 val url = if (line.startsWith("http")) {
                     line
+                } else if (line.startsWith("/")) {
+                    val host = masterUrl.substringAfter("://").substringBefore("/")
+                    "https://$host$line"
                 } else {
-                    val base = masterUrl.substringBeforeLast("/")
-                    if (line.startsWith("/")) {
-                        val host = masterUrl.substringAfter("://").substringBefore("/")
-                        "https://$host$line"
-                    } else {
-                        "$base/$line"
-                    }
+                    "${masterUrl.substringBeforeLast("/")}/$line"
                 }
                 result.add(Triple(height, label, url))
                 infoLine = null
             }
         }
-        return result
-            .sortedByDescending { it.first }
-            .map { it.second to it.third }
+        return result.sortedByDescending { it.first }.map { it.second to it.third }
     }
 
     private fun tryApiGet(url: String, referer: String): String = try {
