@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
+import okio.ByteString.Companion.decodeBase64
 import org.json.JSONArray
 import java.net.URLEncoder
 
@@ -24,28 +25,15 @@ class JavRider : AnimeHttpSource() {
     private val apiUrl = "$baseUrl/wp-json/wp/v2"
     private val embedParam = "wp:featuredmedia"
 
+    private val desktopUa =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
     private val apiHeaders: Headers by lazy {
         headers.newBuilder()
             .add("Accept", "application/json, text/plain, */*")
             .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
             .add("Referer", "$baseUrl/pt/")
-            .build()
-    }
-
-    private val playerHeaders: Headers by lazy {
-        headers.newBuilder()
-            .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
-            .add("Referer", "https://javplayers.com/")
-            .build()
-    }
-
-    private val videoHeaders: Headers by lazy {
-        headers.newBuilder()
-            .add("Referer", "https://javplayers.com/")
-            .add("Origin", "https://javplayers.com")
-            .add("Accept", "*/*")
-            .add("Accept-Encoding", "identity")
             .build()
     }
 
@@ -97,13 +85,11 @@ class JavRider : AnimeHttpSource() {
                 val post = json.getJSONObject(i)
                 val slug = post.optString("slug", "")
                 val realUrl = if (slug.isNotEmpty()) buildUrl(slug) else ""
-
                 val thumb = post.optJSONObject("_embedded")
                     ?.optJSONArray("wp:featuredmedia")
                     ?.optJSONObject(0)
                     ?.optString("source_url")
                     ?.takeIf { it.startsWith("http") }
-
                 val anime = SAnime.create().apply {
                     title = post.getJSONObject("title").getString("rendered")
                         .replace(Regex("<[^>]+>"), "").trim()
@@ -120,10 +106,8 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== DETALHES ====================
 
-    override fun animeDetailsRequest(anime: SAnime): Request {
-        val url = resolveUrl(anime.url)
-        return GET(url, apiHeaders)
-    }
+    override fun animeDetailsRequest(anime: SAnime): Request =
+        GET(resolveUrl(anime.url), apiHeaders)
 
     override fun animeDetailsParse(response: Response): SAnime {
         val document = response.asJsoup()
@@ -133,13 +117,11 @@ class JavRider : AnimeHttpSource() {
             ?.attr("content")?.takeIf { it.startsWith("http") }
         anime.genre = document.select("a.category-item").joinToString(", ") { it.text() }
             .takeIf { it.isNotEmpty() }
-
         val content = document.selectFirst("div.entry-content")
         if (content != null) {
             content.select("div.code-block, script, style").remove()
             anime.description = content.text().trim().take(1500).takeIf { it.isNotEmpty() }
         }
-
         anime.author = document.selectFirst("li:contains(Estúdio) a")?.text()
         anime.status = SAnime.COMPLETED
         return anime
@@ -147,17 +129,13 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== EPISÓDIOS ====================
 
-    override fun episodeListRequest(anime: SAnime): Request {
-        val url = resolveUrl(anime.url)
-        return GET(url, apiHeaders)
-    }
+    override fun episodeListRequest(anime: SAnime): Request =
+        GET(resolveUrl(anime.url), apiHeaders)
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val rawUrl = response.request.url.toString()
-        val cleanUrl = resolveUrl(rawUrl)
         val ep = SEpisode.create().apply {
             name = "Vídeo Completo"
-            url = cleanUrl
+            url = resolveUrl(response.request.url.toString())
             episode_number = 1f
         }
         return listOf(ep)
@@ -165,10 +143,8 @@ class JavRider : AnimeHttpSource() {
 
     // ==================== VÍDEO ====================
 
-    override fun videoListRequest(episode: SEpisode): Request {
-        val url = resolveUrl(episode.url)
-        return GET(url, apiHeaders)
-    }
+    override fun videoListRequest(episode: SEpisode): Request =
+        GET(resolveUrl(episode.url), apiHeaders)
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
@@ -188,32 +164,86 @@ class JavRider : AnimeHttpSource() {
         document.select("video, video source").forEach { el ->
             val src = el.attr("src").ifEmpty { el.attr("data-src") }
             if (src.startsWith("http") && videos.none { it.url == src }) {
-                videos.add(Video(src, "Direto", src, videoHeaders))
+                videos.add(Video(src, "Direto", src, videoHeadersFor(referer)))
             }
         }
 
         return videos
     }
 
+    private fun videoHeadersFor(referer: String): Headers = headers.newBuilder()
+        .add("User-Agent", desktopUa)
+        .add("Referer", referer)
+        .add("Origin", "https://javplayers.com")
+        .add("Accept", "*/*")
+        .add("Accept-Encoding", "identity")
+        .build()
+
     private fun extractFromPlayer(iframeUrl: String, referer: String): List<Video> {
         val videos = mutableListOf<Video>()
         try {
-            val reqHeaders = playerHeaders.newBuilder()
+            val reqHeaders = Headers.Builder()
+                .add("User-Agent", desktopUa)
+                .add(
+                    "Accept",
+                    "text/html,application/xhtml+xml,application/xml;q=0.9," +
+                        "image/avif,image/webp,*/*;q=0.8",
+                )
+                .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
                 .add("Referer", referer)
+                .add("Sec-Fetch-Dest", "iframe")
+                .add("Sec-Fetch-Mode", "navigate")
+                .add("Sec-Fetch-Site", "cross-site")
+                .add("Upgrade-Insecure-Requests", "1")
                 .build()
-            val req = Request.Builder().url(iframeUrl).headers(reqHeaders).build()
-            val html = client.newCall(req).execute().use { it.body!!.string() }
 
-            val m3Regex = Regex("""https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+""")
-            m3Regex.findAll(html).map { it.value }.distinct().forEachIndexed { i, url ->
-                videos.add(Video(url, "Servidor ${i + 1}", url, videoHeaders))
+            val req = Request.Builder().url(iframeUrl).headers(reqHeaders).build()
+            val rawHtml = client.newCall(req).execute().use { it.body!!.string() }
+
+            // Normaliza escapes comuns em JS/JSON
+            val html = rawHtml
+                .replace("\\/", "/")
+                .replace("\\u002F", "/")
+                .replace("\\u002f", "/")
+                .replace("\\u0026", "&")
+                .replace("&amp;", "&")
+
+            // 1) m3 URL (a boa)
+            Regex("""https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+""")
+                .findAll(html).map { it.value }.distinct()
+                .forEachIndexed { i, url ->
+                    videos.add(Video(url, "Servidor ${i + 1}", url, videoHeadersFor(iframeUrl)))
+                }
+
+            // 2) qualquer m3u8/mp4 direto
+            if (videos.isEmpty()) {
+                Regex("""https?://[^"'\s\\<>]+\.(?:m3u8|mp4)[^"'\s\\<>]*""")
+                    .findAll(html).map { it.value }.distinct()
+                    .forEachIndexed { i, url ->
+                        videos.add(
+                            Video(url, "Servidor ${i + 1}", url, videoHeadersFor(iframeUrl)),
+                        )
+                    }
             }
 
+            // 3) fallback: strings base64 grandes → decodifica e procura URL
             if (videos.isEmpty()) {
-                val generic = Regex("""https?://[^"'\s\\]+\.(?:m3u8|mp4)[^"'\s\\]*""")
-                generic.findAll(html).map { it.value }.distinct().forEachIndexed { i, url ->
-                    videos.add(Video(url, "Servidor ${i + 1}", url, videoHeaders))
-                }
+                Regex("""[A-Za-z0-9+/]{60,}={0,2}""")
+                    .findAll(html).take(30).forEach { match ->
+                        try {
+                            val decoded = match.value.decodeBase64()?.utf8() ?: return@forEach
+                            Regex("""https?://[^"'\s\\<>]+""")
+                                .find(decoded)?.value?.let { url ->
+                                    if (videos.none { it.url == url }) {
+                                        videos.add(
+                                            Video(url, "Servidor B64", url, videoHeadersFor(iframeUrl)),
+                                        )
+                                    }
+                                }
+                        } catch (_: Exception) {
+                            // ignora base64 inválido
+                        }
+                    }
             }
         } catch (_: Exception) {
             // silencioso
