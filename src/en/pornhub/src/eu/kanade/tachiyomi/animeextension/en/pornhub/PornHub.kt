@@ -26,7 +26,7 @@ class PornHub : ParsedAnimeHttpSource() {
 
     override val client: OkHttpClient = network.client.newBuilder().build()
 
-    // Headers necessários para simular um navegador e evitar ser bloqueado ou redirecionado
+    // Headers necessários para simular um navegador, evitar bloqueios e permitir a reprodução na CDN
     override fun headersBuilder(): Headers.Builder {
         return Headers.Builder()
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
@@ -40,13 +40,11 @@ class PornHub : ParsedAnimeHttpSource() {
         return GET("$baseUrl/video?o=mv&page=$page", headers)
     }
 
-    // Seletores abrangentes para cobrir diferentes estruturas de HTML do site
     override fun popularAnimeSelector(): String = "ul.videos li, ul.search-video-thumbs li, div.ph-thumbnail-card, li.pcVideoListItem"
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
 
-        // Tenta capturar a URL por diferentes seletores e atributos
         val rawUrl = element.select("a[href*=/view_video.php]").firstOrNull()?.attr("href")
             ?: element.select("a").firstOrNull()?.attr("href")
             ?: element.attr("data-href")
@@ -58,13 +56,11 @@ class PornHub : ParsedAnimeHttpSource() {
             anime.url = ""
         }
 
-        // Título
         val titleText = element.select("span.title, a.title, .videoTitle, img").attr("alt").ifBlank {
             element.select("span.title, a.title, .videoTitle").text()
         }
         anime.title = titleText.ifBlank { "Sem título" }
 
-        // Thumbnail / Capa
         val thumbUrl = element.select("img").attr("data-thumb_url").takeIf { it.isNotBlank() }
             ?: element.select("img").attr("data-mediumproxy").takeIf { it.isNotBlank() }
             ?: element.select("img").attr("data-src").takeIf { it.isNotBlank() }
@@ -156,11 +152,16 @@ class PornHub : ParsedAnimeHttpSource() {
         val hlsRegex = """"videoUrl"\s*:\s*"([^"]+)"""".toRegex()
         val matches = hlsRegex.findAll(scriptData)
 
+        // Passa os headers com Referer explicitamente para o player MPV não tomar 404 nos segmentos .ts
+        val videoHeaders = headersBuilder()
+            .add("Referer", response.request.url.toString())
+            .build()
+
         var count = 1
         for (match in matches) {
             val url = match.groupValues[1].replace("\\/", "/")
             if (url.isNotBlank() && url.contains(".m3u8")) {
-                videoList.add(Video(url, "Qualidade $count", url))
+                videoList.add(Video(url, "Qualidade $count", url, headers = videoHeaders))
                 count++
             }
         }
