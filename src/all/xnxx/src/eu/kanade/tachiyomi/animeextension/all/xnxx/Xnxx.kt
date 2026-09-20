@@ -31,7 +31,8 @@ class Xnxx :
 
     private val preferences by getPreferencesLazy()
 
-    override fun popularAnimeSelector(): String = "div.mozaique > div.thumb-block:not(.thumb-cat)"
+    // Seletor universal para capturar cards de vídeo em buscas e na aba Popular
+    override fun popularAnimeSelector(): String = "div[id*='video_'].thumb-block, div.mozaique > div.thumb-block:not(.thumb-cat)"
 
     override fun popularAnimeRequest(page: Int): Request {
         val pagePath = if (page > 1) "/${page - 1}" else ""
@@ -40,18 +41,29 @@ class Xnxx :
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
-        val linkElement = element.selectFirst("div.thumb-under > p > a, div.thumb > a")
+        
+        // Pega o elemento do link principal do vídeo
+        val linkElement = element.selectFirst("div.thumb-under p a, div.thumb a")
 
         anime.setUrlWithoutDomain(linkElement?.attr("href") ?: "")
-        anime.title = linkElement?.attr("title")?.ifEmpty { linkElement.text() } ?: element.select("p.title").text()
 
+        // Preserva o título traduzido se disponível (atributo 'title' do link ou texto da tag <p>)
+        val titleText = linkElement?.attr("title")?.takeIf { it.isNotBlank() }
+            ?: element.select("div.thumb-under p a").text().takeIf { it.isNotBlank() }
+            ?: element.select("p.title a").text()
+        anime.title = titleText
+
+        // Pega a imagem testando os atributos 'data-src', 'data-videopreviewsrc' e 'src' para garantir a capa
         val img = element.selectFirst("div.thumb img")
-        anime.thumbnail_url = img?.attr("data-src")?.ifEmpty { img.attr("src") } ?: ""
+        anime.thumbnail_url = img?.attr("data-src")?.takeIf { it.isNotBlank() }
+            ?: img?.attr("src")?.takeIf { it.isNotBlank() }
+            ?: ""
 
         return anime
     }
 
-    override fun popularAnimeNextPageSelector(): String = "div.pagination ul li a.next, #content-thumbs div.pagination ul li a.next"
+    // Seletor ajustado para capturar a paginação e permitir o scroll infinito
+    override fun popularAnimeNextPageSelector(): String = "a.next, div.pagination ul li a.next, #content-thumbs div.pagination ul li a.next"
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val episode = SEpisode.create().apply {
