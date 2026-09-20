@@ -16,6 +16,9 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class Xnxx :
     ParsedAnimeHttpSource(),
@@ -31,47 +34,33 @@ class Xnxx :
 
     private val preferences by getPreferencesLazy()
 
-    // Seletor universal para capturar cards de vídeo em buscas e na aba Popular
-    override fun popularAnimeSelector(): String = "div[id*='video_'].thumb-block, div.mozaique > div.thumb-block:not(.thumb-cat)"
+    override fun popularAnimeSelector(): String = "div[id*='video_'].thumb-block"
 
     override fun popularAnimeRequest(page: Int): Request {
-        val pagePath = if (page > 1) "/${page - 1}" else ""
-        return GET("$baseUrl/best$pagePath", headers)
+        val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
+        val currentDate = sdf.format(Date())
+        return GET("$baseUrl/best/$currentDate/${page - 1}")
     }
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
-        
-        // Pega o elemento do link principal do vídeo
-        val linkElement = element.selectFirst("div.thumb-under p a, div.thumb a")
-
-        anime.setUrlWithoutDomain(linkElement?.attr("href") ?: "")
-
-        // Preserva o título traduzido se disponível (atributo 'title' do link ou texto da tag <p>)
-        val titleText = linkElement?.attr("title")?.takeIf { it.isNotBlank() }
-            ?: element.select("div.thumb-under p a").text().takeIf { it.isNotBlank() }
-            ?: element.select("p.title a").text()
-        anime.title = titleText
-
-        // Pega a imagem testando os atributos 'data-src', 'data-videopreviewsrc' e 'src' para garantir a capa
-        val img = element.selectFirst("div.thumb img")
-        anime.thumbnail_url = img?.attr("data-src")?.takeIf { it.isNotBlank() }
-            ?: img?.attr("src")?.takeIf { it.isNotBlank() }
-            ?: ""
-
+        anime.setUrlWithoutDomain("$baseUrl${element.select("div.thumb-inside div.thumb > a").attr("href")}")
+        anime.title = element.select("div.thumb-under > p > a").text()
+        anime.thumbnail_url = element.select("div.thumb-inside div.thumb img[id*='pic_']").attr("data-src")
         return anime
     }
 
-    // Seletor ajustado para capturar a paginação e permitir o scroll infinito
-    override fun popularAnimeNextPageSelector(): String = "a.next, div.pagination ul li a.next, #content-thumbs div.pagination ul li a.next"
+    override fun popularAnimeNextPageSelector(): String = "#content-thumbs div.pagination ul li a.next"
 
     override fun episodeListParse(response: Response): List<SEpisode> {
+        val episodes = mutableListOf<SEpisode>()
         val episode = SEpisode.create().apply {
             name = "Video"
             setUrlWithoutDomain(response.request.url.toString())
             date_upload = System.currentTimeMillis()
         }
-        return listOf(episode)
+        episodes.add(episode)
+        return episodes
     }
 
     override fun episodeListSelector() = throw Exception("not used")
@@ -84,18 +73,11 @@ class Xnxx :
         val lowQuality = sourcesJson.substringAfter("VideoUrlLow('").substringBefore("')")
         val hlsQuality = sourcesJson.substringAfter("setVideoHLS('").substringBefore("')")
         val highQuality = sourcesJson.substringAfter("VideoUrlHigh('").substringBefore("')")
-
-        val videos = mutableListOf<Video>()
-        if (highQuality.isNotBlank() && highQuality.startsWith("http")) {
-            videos.add(Video(highQuality, "High", highQuality))
-        }
-        if (hlsQuality.isNotBlank() && hlsQuality.startsWith("http")) {
-            videos.add(Video(hlsQuality, "HLS", hlsQuality))
-        }
-        if (lowQuality.isNotBlank() && lowQuality.startsWith("http")) {
-            videos.add(Video(lowQuality, "Low", lowQuality))
-        }
-        return videos
+        return listOf(
+            Video(lowQuality, "Low", lowQuality),
+            Video(hlsQuality, "HLS", hlsQuality),
+            Video(highQuality, "High", highQuality),
+        )
     }
 
     override fun videoListSelector() = throw Exception("not used")
@@ -123,15 +105,14 @@ class Xnxx :
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val tagFilter = filters.find { it is Tags } as? Tags
+        val tagFilter = filters.find { it is Tags } as Tags
         val calcPage = page - 1
         return when {
             query.isNotBlank() -> GET("$baseUrl/search/hits/$query/$calcPage", headers)
-            tagFilter != null && tagFilter.state.isNotBlank() -> GET("$baseUrl/search/hits/${tagFilter.state}/$calcPage", headers)
+            tagFilter.state.isNotBlank() -> GET("$baseUrl/search/hits/${tagFilter.state}/$calcPage")
             else -> popularAnimeRequest(page)
         }
     }
-
     override fun searchAnimeFromElement(element: Element) = popularAnimeFromElement(element)
 
     override fun searchAnimeNextPageSelector(): String = popularAnimeNextPageSelector()
