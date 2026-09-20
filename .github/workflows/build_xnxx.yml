@@ -12,7 +12,6 @@ on:
       - 'src/all/xnxx/**'
   workflow_dispatch:
 
-# ⬇️ NECESSÁRIO para o softprops/action-gh-release criar Releases
 permissions:
   contents: write
 
@@ -42,6 +41,9 @@ jobs:
 
       - name: Permissão de execução no gradlew
         run: chmod +x ./gradlew
+
+      - name: Corrigir formatação automaticamente com Spotless
+        run: ./gradlew :src:all:xnxx:spotlessApply --no-daemon
 
       - name: Compilar a extensão Xnxx
         run: ./gradlew :src:all:xnxx:assembleDebug --no-daemon --stacktrace
