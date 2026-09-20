@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animeextension.pt.javrider
 
-import android.util.Log
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -12,6 +11,7 @@ import eu.kanade.tachiyomi.network.GET
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONArray
@@ -207,8 +207,8 @@ class JavRider : AnimeHttpSource() {
                     videos.add(Video(src, "Direto", src, videoHeadersFor(referer), subtitleTracks = pageTracks))
                 }
             }
-        } catch (e: Exception) {
-            Log.e("JavRider", "VIDEO erro: ${e.message}", e)
+        } catch (_: Exception) {
+            // Log removido para a versão final de release
         }
         return videos
     }
@@ -235,8 +235,8 @@ class JavRider : AnimeHttpSource() {
                 .headers(playerPageHeaders(referer))
                 .build()
             iframeHtml = client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
-        } catch (e: Exception) {
-            Log.e("JavRider", "Iframe erro: ${e.message}")
+        } catch (_: Exception) {
+            // Log removido para a versão final de release
         }
 
         val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
@@ -378,7 +378,7 @@ class JavRider : AnimeHttpSource() {
         ""
     }
 
-    private fun tryApiPost(url: String, referer: String, body: okhttp3.RequestBody): String = try {
+    private fun tryApiPost(url: String, referer: String, body: RequestBody): String = try {
         val req = Request.Builder()
             .url(url)
             .headers(apiHeadersFor(referer))
