@@ -6,10 +6,10 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.asJsoup
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
@@ -118,22 +118,22 @@ class PornHub : ParsedAnimeHttpSource() {
 
     // =============================== VIDEOS ===============================
 
-    // Implementação dos membros abstratos obrigatórios de ParsedAnimeHttpSource
     override fun videoListSelector(): String = "html"
 
     override fun videoFromElement(element: Element): Video {
-        throw UnsupportedOperationException("Não utilizado; extração feita via videoListParse")
+        throw UnsupportedOperationException("Não utilizado")
     }
 
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = Jsoup.parse(response.body.string())
         val videoList = mutableListOf<Video>()
 
-        // Extrai os scripts da página com segurança
-        val scripts = document.select("script")
+        // Converte para lista tradicional para evitar ambiguidade de iterator no Kotlin
+        val scripts = document.select("script").toList()
         var scriptData = ""
-        for (script in scripts) {
-            val data = script.data()
+        
+        for (i in scripts.indices) {
+            val data = scripts[i].data()
             if (data.contains("flashvars")) {
                 scriptData = data
                 break
