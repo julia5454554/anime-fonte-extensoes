@@ -104,10 +104,10 @@ class JavRider : AnimeHttpSource() {
             for (i in 0 until json.length()) {
                 val post = json.getJSONObject(i)
                 val link = post.optString("link", "")
-                
+
                 // Filtro extremo: Se a url não for da versão em português, descartar
                 if (!link.contains("/pt/")) continue
-                
+
                 val slug = post.optString("slug", "")
                 val realUrl = if (slug.isNotEmpty()) buildUrl(slug) else link
                 val thumb = post.optJSONObject("_embedded")
@@ -261,7 +261,7 @@ class JavRider : AnimeHttpSource() {
             val json = JSONObject(normalized)
             secured = json.optString("securedLink", "").takeIf { it.startsWith("http") }
             source = json.optString("videoSource", "").takeIf { it.startsWith("http") }
-            
+
             // Tentar extrair de arrays como "subtitles" ou "captions" se o regex não pegar
             val subtitles = json.optJSONArray("subtitles") ?: json.optJSONArray("captions")
             if (subtitles != null) {
