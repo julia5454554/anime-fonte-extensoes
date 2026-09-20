@@ -226,5 +226,3 @@ data class PhubVideoJson(
     val videoUrl: String? = null,
     val quality: JsonElement? = null,
 )
-
-Esse código foi oque mais funcionou bem em capa título etc... esse código funcionou o vídeo em player externo mpvkt
