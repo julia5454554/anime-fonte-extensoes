@@ -72,7 +72,6 @@ class JavRider : AnimeHttpSource() {
     // ==================== LISTAGEM ====================
 
     override fun popularAnimeRequest(page: Int): Request {
-        // Adicionado &lang=pt para forçar a API a trazer conteúdo PT
         val url = "$apiUrl/posts?per_page=24&page=$page&_embed=$embedParam&lang=pt"
         return GET(url, apiHeaders)
     }
@@ -179,6 +178,16 @@ class JavRider : AnimeHttpSource() {
         val referer = responseUrlOrDefault(response)
         try {
             val document = safeDocument(response)
+
+            // Tracks extras direto da pagina html (se existirem)
+            val pageTracks = mutableListOf<Track>()
+            document.select("video track, track").forEach { el ->
+                val src = el.attr("src").ifEmpty { el.attr("data-src") }
+                if (src.startsWith("http") && pageTracks.none { it.url == src }) {
+                    pageTracks.add(Track(src, el.attr("label").ifEmpty { "Legenda PT" }))
+                }
+            }
+
             val iframe = document.selectFirst("div.player-3rdparty iframe, iframe[src*=javplayers]")
                 ?: document.selectFirst("iframe[src]")
             val iframeSrc = iframe?.let {
@@ -186,13 +195,13 @@ class JavRider : AnimeHttpSource() {
             }.orEmpty()
 
             if (iframeSrc.startsWith("http")) {
-                videos.addAll(extractFromPlayer(iframeSrc, referer))
+                videos.addAll(extractFromPlayer(iframeSrc, referer, pageTracks))
             }
 
             document.select("video, video source").forEach { el ->
                 val src = el.attr("src").ifEmpty { el.attr("data-src") }
                 if (src.startsWith("http") && videos.none { it.url == src }) {
-                    videos.add(Video(src, "Direto", src, videoHeadersFor(referer)))
+                    videos.add(Video(src, "Direto", src, videoHeadersFor(referer), subtitleTracks = pageTracks))
                 }
             }
         } catch (e: Exception) {
@@ -209,29 +218,30 @@ class JavRider : AnimeHttpSource() {
         .add("Accept-Encoding", "identity")
         .build()
 
-    private fun extractFromPlayer(iframeUrl: String, referer: String): List<Video> {
+    private fun extractFromPlayer(iframeUrl: String, referer: String, extraTracks: List<Track> = emptyList()): List<Video> {
         val videos = mutableListOf<Video>()
         val hash = Regex("""/video/([a-f0-9]{16,})""")
             .find(iframeUrl)?.groupValues?.get(1)
             ?: return videos
 
-        // Passo 1: visitar a página do iframe (pra popular cookies no CookieJar do OkHttp)
+        var iframeHtml = ""
+        // Passo 1: visitar a página do iframe (pega cookies + HTML para buscar tags de legenda ocultas)
         try {
             val pageReq = Request.Builder()
                 .url(iframeUrl)
                 .headers(playerPageHeaders(referer))
                 .build()
-            client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
+            iframeHtml = client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
         } catch (e: Exception) {
             Log.e("JavRider", "Iframe erro: ${e.message}")
         }
 
         val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
 
-        // Passo 2: GET
+        // Passo 2: GET JSON
         var body = tryApiGet(apiUrl, iframeUrl)
 
-        // Passo 3: se veio HTML curto/vazio, tenta POST
+        // Passo 3: se veio HTML curto/vazio, tenta POST JSON
         if (body.length < 500 || !body.contains("securedLink", true)) {
             val postBody = "data=$hash&do=getVideo"
                 .toRequestBody("application/x-www-form-urlencoded".toMediaType())
@@ -241,28 +251,37 @@ class JavRider : AnimeHttpSource() {
             }
         }
 
-        // Extração: tenta JSON puro, depois regex
         val normalized = body.replace("\\/", "/").replace("\\u002F", "/")
         var secured: String? = null
         var source: String? = null
         val tracks = mutableListOf<Track>()
+        tracks.addAll(extraTracks)
 
-        // Extração das legendas
-        val srtRegex = Regex("""(https?://[^"'\s<>]+\.(?:srt|vtt))""")
-        var trackCount = 1
-        srtRegex.findAll(normalized).forEach { match ->
+        // Extração de Legendas - Camada 1: Regex global (Pega .srt/.vtt tanto no Iframe quanto no JSON)
+        val textToSearch = iframeHtml + "\n" + normalized
+        val srtRegex = Regex("""(https?://[^"'\s<>]+?\.(?:srt|vtt)[^"'\s<>]*)""")
+        srtRegex.findAll(textToSearch).forEach { match ->
             val subUrl = match.groupValues[1]
             if (tracks.none { it.url == subUrl }) {
-                tracks.add(Track(subUrl, "Português ${trackCount++}".trim()))
+                tracks.add(Track(subUrl, "Legenda ${tracks.size + 1}"))
             }
         }
 
+        // Extração de Legendas - Camada 2: Tags HTML <track> nativas ocultas no iframe
+        val trackTagRegex = Regex("""<track[^>]+src=["'](https?://[^"']+)["'][^>]*>""")
+        trackTagRegex.findAll(iframeHtml).forEach { match ->
+            val file = match.groupValues[1].replace("&amp;", "&")
+            if (tracks.none { it.url == file }) {
+                tracks.add(Track(file, "Legenda HTML ${tracks.size + 1}"))
+            }
+        }
+
+        // Extração de Legendas - Camada 3: Parse do JSON puro (caso a url não tenha terminação .srt óbvia)
         try {
             val json = JSONObject(normalized)
             secured = json.optString("securedLink", "").takeIf { it.startsWith("http") }
             source = json.optString("videoSource", "").takeIf { it.startsWith("http") }
 
-            // Tentar extrair de arrays como "subtitles" ou "captions" se o regex não pegar
             val subtitles = json.optJSONArray("subtitles") ?: json.optJSONArray("captions")
             if (subtitles != null) {
                 for (i in 0 until subtitles.length()) {
@@ -273,11 +292,17 @@ class JavRider : AnimeHttpSource() {
                         tracks.add(Track(file, label))
                     }
                 }
+            } else {
+                val subStr = json.optString("subtitle", "").ifEmpty { json.optString("subtitles", "") }
+                if (subStr.startsWith("http") && tracks.none { it.url == subStr }) {
+                    tracks.add(Track(subStr.replace("\\/", "/"), "Legenda Principal"))
+                }
             }
         } catch (_: Exception) {
-            // não é JSON puro
+            // Não falha caso não seja JSON
         }
 
+        // Recuperar as streams m3u8 ou mp4 se a camada JSON falhou
         if (secured == null) {
             secured = Regex(""""securedLink"\s*:\s*"([^"]+)"""")
                 .find(normalized)?.groupValues?.get(1)
@@ -298,7 +323,7 @@ class JavRider : AnimeHttpSource() {
                 ?.let { if (it.startsWith("http")) it else "https://javplayers.com$it" }
         }
 
-        // Montagem do vídeo anexando a variável tracks que capturou os links das legendas
+        // Montagem do vídeo anexando a variável tracks populada
         if (secured != null) {
             videos.add(Video(secured, "Principal", secured, videoHeadersFor(iframeUrl), subtitleTracks = tracks))
         }
