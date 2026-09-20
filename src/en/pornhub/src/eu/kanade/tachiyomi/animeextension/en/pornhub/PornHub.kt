@@ -1,6 +1,9 @@
 package eu.kanade.tachiyomi.animeextension.all.pornhub
 
-import eu.kanade.tachiyomi.animesource.model.*
+import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
@@ -25,7 +28,7 @@ class PornHub : ParsedAnimeHttpSource() {
     override fun popularAnimeRequest(page: Int): Request =
         GET("$baseUrl/video?page=$page", headers)
 
-    override fun popularAnimeSelector() =
+    override fun popularAnimeSelector(): String =
         "div.gridWrapper li.pcVideoListItem"
 
     override fun popularAnimeFromElement(element: Element): SAnime {
@@ -36,7 +39,7 @@ class PornHub : ParsedAnimeHttpSource() {
                 element.selectFirst("img")?.attr("src")
 
             setUrlWithoutDomain(
-                element.selectFirst("a")?.attr("href").orEmpty()
+                element.selectFirst("a")?.attr("href").orEmpty(),
             )
         }
     }
@@ -55,14 +58,14 @@ class PornHub : ParsedAnimeHttpSource() {
         )
     }
 
-    override fun searchAnimeSelector() =
+    override fun searchAnimeSelector(): String =
         popularAnimeSelector()
 
     override fun searchAnimeFromElement(
         element: Element,
     ): SAnime = popularAnimeFromElement(element)
 
-    override fun searchAnimeNextPageSelector() =
+    override fun searchAnimeNextPageSelector(): String? =
         popularAnimeNextPageSelector()
 
     override fun animeDetailsParse(document: Document): SAnime {
@@ -72,12 +75,12 @@ class PornHub : ParsedAnimeHttpSource() {
 
             description =
                 document.selectFirst(
-                    "meta[property=og:description]"
+                    "meta[property=og:description]",
                 )?.attr("content")
 
             thumbnail_url =
                 document.selectFirst(
-                    "img.videoElementPoster"
+                    "img.videoElementPoster",
                 )?.attr("src")
 
             genre =
@@ -95,7 +98,7 @@ class PornHub : ParsedAnimeHttpSource() {
             SEpisode.create().apply {
                 name = "Video"
                 setUrlWithoutDomain(
-                    response.request.url.toString()
+                    response.request.url.toString(),
                 )
             },
         )
@@ -110,12 +113,11 @@ class PornHub : ParsedAnimeHttpSource() {
     override fun videoListParse(
         response: Response,
     ): List<Video> {
-
         val document = response.asJsoup()
 
         val script =
             document.selectFirst(
-                "script:containsData(var flashvars)"
+                "script:containsData(var flashvars)",
             )?.data()
                 ?: return emptyList()
 
