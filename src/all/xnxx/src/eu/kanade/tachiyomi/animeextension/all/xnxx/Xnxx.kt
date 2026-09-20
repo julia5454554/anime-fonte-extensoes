@@ -31,10 +31,8 @@ class Xnxx :
 
     private val preferences by getPreferencesLazy()
 
-    // Seleciona apenas os blocos de vídeo, ignorando as categorias da home
     override fun popularAnimeSelector(): String = "div.mozaique > div.thumb-block:not(.thumb-cat)"
 
-    // Altera a rota para a busca dos mais vistos/populares por página
     override fun popularAnimeRequest(page: Int): Request {
         val pagePath = if (page > 1) "/${page - 1}" else ""
         return GET("$baseUrl/best$pagePath", headers)
@@ -43,14 +41,13 @@ class Xnxx :
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
         val linkElement = element.selectFirst("div.thumb-under > p > a, div.thumb > a")
-        
+
         anime.setUrlWithoutDomain(linkElement?.attr("href") ?: "")
         anime.title = linkElement?.attr("title")?.ifEmpty { linkElement.text() } ?: element.select("p.title").text()
-        
-        // Garante a extração da thumbnail testando data-src e src
+
         val img = element.selectFirst("div.thumb img")
         anime.thumbnail_url = img?.attr("data-src")?.ifEmpty { img.attr("src") } ?: ""
-        
+
         return anime
     }
 
@@ -75,7 +72,7 @@ class Xnxx :
         val lowQuality = sourcesJson.substringAfter("VideoUrlLow('").substringBefore("')")
         val hlsQuality = sourcesJson.substringAfter("setVideoHLS('").substringBefore("')")
         val highQuality = sourcesJson.substringAfter("VideoUrlHigh('").substringBefore("')")
-        
+
         val videos = mutableListOf<Video>()
         if (highQuality.isNotBlank() && highQuality.startsWith("http")) {
             videos.add(Video(highQuality, "High", highQuality))
