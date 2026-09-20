@@ -173,21 +173,29 @@ class JavRider : AnimeHttpSource() {
     override fun videoListParse(response: Response): List<Video> {
         val videos = mutableListOf<Video>()
         val referer = responseUrlOrDefault(response)
+        Log.e("JavRider", "=== VIDEO START referer=$referer ===")
         try {
             val document = safeDocument(response)
+            Log.e("JavRider", "VIDEO doc title=${document.title()}")
             val iframe = document.selectFirst("div.player-3rdparty iframe, iframe[src*=javplayers]")
                 ?: document.selectFirst("iframe[src]")
+            Log.e("JavRider", "VIDEO iframe ele=${iframe?.outerHtml()?.take(300)}")
             val iframeSrc = iframe?.let {
                 it.attr("src").ifEmpty { it.attr("data-lazy-src") }
             }.orEmpty()
+            Log.e("JavRider", "VIDEO iframeSrc=$iframeSrc")
 
             if (iframeSrc.startsWith("http")) {
-                videos.addAll(extractFromPlayer(iframeSrc, referer))
+                val extracted = extractFromPlayer(iframeSrc, referer)
+                Log.e("JavRider", "VIDEO extracted=${extracted.size}")
+                videos.addAll(extracted)
+            } else {
+                Log.e("JavRider", "VIDEO iframeSrc não começa com http")
             }
         } catch (e: Exception) {
-            Log.e("JavRider", "VIDEO erro: ${e.message}", e)
+            Log.e("JavRider", "VIDEO exception: ${e.message}", e)
         }
-        Log.e("JavRider", "VIDEO total=${videos.size}")
+        Log.e("JavRider", "=== VIDEO END total=${videos.size} ===")
         return videos
     }
 
@@ -203,7 +211,8 @@ class JavRider : AnimeHttpSource() {
         val videos = mutableListOf<Video>()
         val hash = Regex("""/video/([a-f0-9]{16,})""")
             .find(iframeUrl)?.groupValues?.get(1)
-            ?: return videos
+        Log.e("JavRider", "PLAYER hash=$hash")
+        if (hash == null) return videos
 
         // Passo 1: visitar iframe (popula cookies)
         try {
@@ -211,15 +220,20 @@ class JavRider : AnimeHttpSource() {
                 .url(iframeUrl)
                 .headers(playerPageHeaders(referer))
                 .build()
-            client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
-        } catch (_: Exception) {
-            // segue
+            val pageBody = client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
+            Log.e("JavRider", "PLAYER iframe page len=${pageBody.length}")
+        } catch (e: Exception) {
+            Log.e("JavRider", "PLAYER iframe erro: ${e.message}")
         }
 
         // Passo 2: API getVideo
         val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
         val body = tryApiGet(apiUrl, iframeUrl)
-        if (body.isBlank()) return videos
+        Log.e("JavRider", "PLAYER api body[${body.length}] first500=${body.take(500)}")
+        if (body.isBlank()) {
+            Log.e("JavRider", "PLAYER body vazio, saindo")
+            return videos
+        }
 
         // Passo 3: extrai securedLink + videoSource
         val normalized = body.replace("\\/", "/").replace("\\u002F", "/")
@@ -245,59 +259,45 @@ class JavRider : AnimeHttpSource() {
             secured = Regex("""(https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+)""")
                 .find(normalized)?.groupValues?.get(1)
         }
+        Log.e("JavRider", "PLAYER secured=$secured")
+        Log.e("JavRider", "PLAYER source=$source")
 
         val usedUrl = secured ?: source
-        if (usedUrl == null) return videos
+        if (usedUrl == null) {
+            Log.e("JavRider", "PLAYER nenhum link no body")
+            return videos
+        }
 
-        // Passo 4: extrai legendas SRT
+        // Passo 4: legendas
         val subtitles = extractSubtitles(normalized)
 
-        // Passo 5: parseia m3u8 master
+        // Passo 5: m3u8 master
         val masterBody = tryApiGet(usedUrl, "https://javplayers.com/")
+        Log.e("JavRider", "PLAYER master[${masterBody.length}] first400=${masterBody.take(400)}")
+
         val variants = parseM3u8Master(masterBody, usedUrl)
+        Log.e("JavRider", "PLAYER variants=${variants.size} labels=${variants.map { it.first }}")
 
         if (variants.isNotEmpty()) {
             variants.forEach { (label, url) ->
                 videos.add(Video(url, label, url, videoHeadersFor(iframeUrl), subtitleTracks = subtitles))
             }
         } else {
+            Log.e("JavRider", "PLAYER usando master direto")
             videos.add(Video(usedUrl, "Auto", usedUrl, videoHeadersFor(iframeUrl), subtitleTracks = subtitles))
         }
         return videos
     }
 
-    /** Procura URLs de legendas (.srt ou /Subtitle/) no corpo da resposta. */
     private fun extractSubtitles(body: String): List<Track> {
         val tracks = mutableListOf<Track>()
         val seen = mutableSetOf<String>()
 
-        // 1) Padrão completo: https://.../Subtitle/....srt
-        Regex("""https?://[^"'\s]+/Subtitle/[^"'\s]+\.srt""")
+        Regex("""https?://[^"'\s]+\.srt""")
             .findAll(body).forEach { match ->
                 val url = match.value
                 if (seen.add(url)) tracks.add(Track(url, "Português"))
             }
-
-        // 2) URLs .srt soltas
-        if (tracks.isEmpty()) {
-            Regex("""https?://[^"'\s]+\.srt""")
-                .findAll(body).forEach { match ->
-                    val url = match.value
-                    if (seen.add(url)) tracks.add(Track(url, "Português"))
-                }
-        }
-
-        // 3) Caminhos relativos /Subtitle/....srt (constrói a URL base)
-        if (tracks.isEmpty()) {
-            Regex("""(/Subtitle/[^"'\s]+\.srt)""")
-                .findAll(body).forEach { match ->
-                    val path = match.groupValues[1]
-                    val base = "https://trk6tu.akmicdn.com"
-                    val url = "$base$path"
-                    if (seen.add(url)) tracks.add(Track(url, "Português"))
-                }
-        }
-
         Log.e("JavRider", "SUBS found=${tracks.size}")
         return tracks
     }
