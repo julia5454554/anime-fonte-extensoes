@@ -19,7 +19,7 @@ class PornHub : ParsedAnimeHttpSource() {
 
     override val name = "PornHub"
 
-    override val baseUrl = "https://pt.pornhub.com"
+    override val baseUrl = "https://www.pornhub.com"
 
     override val lang = "en"
 
