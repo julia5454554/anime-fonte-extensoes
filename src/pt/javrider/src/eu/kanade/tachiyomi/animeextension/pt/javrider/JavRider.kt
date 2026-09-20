@@ -182,7 +182,10 @@ class JavRider : AnimeHttpSource() {
             // Tracks extras direto da pagina html (se existirem)
             val pageTracks = mutableListOf<Track>()
             document.select("video track, track").forEach { el ->
+                // Adicionada limpeza preventiva para evitar links concatenados vindos do HTML
                 val src = el.attr("src").ifEmpty { el.attr("data-src") }
+                    .substringBefore(",")
+                    .substringBefore("[")
                 if (src.startsWith("http") && pageTracks.none { it.url == src }) {
                     pageTracks.add(Track(src, el.attr("label").ifEmpty { "Legenda PT" }))
                 }
@@ -257,26 +260,52 @@ class JavRider : AnimeHttpSource() {
         val tracks = mutableListOf<Track>()
         tracks.addAll(extraTracks)
 
-        // Extração de Legendas - Camada 1: Regex global (Pega .srt/.vtt tanto no Iframe quanto no JSON)
         val textToSearch = iframeHtml + "\n" + normalized
-        val srtRegex = Regex("""(https?://[^"'\s<>]+?\.(?:srt|vtt)[^"'\s<>]*)""")
-        srtRegex.findAll(textToSearch).forEach { match ->
-            val subUrl = match.groupValues[1]
+
+        // =========================================================================
+        // EXTRAÇÃO DE LEGENDAS - CAMADA 1: Foco exclusivo na legenda PT (Correção mpv)
+        // =========================================================================
+        
+        // Esta Regex procura a tag PT e garante que a extração para imediatamente 
+        // caso encontre vírgulas ou novos colchetes (ex: ,[EN]), resolvendo o bug do mpv.
+        val regexPt = Regex("""\[(?:PT|PT-BR|pt|pt-br|Português)\](https?://[^,\[\]"'\s<>]+?\.(?:srt|vtt))""", RegexOption.IGNORE_CASE)
+        var ptEncontrada = false
+
+        regexPt.findAll(textToSearch).forEach { match ->
+            val subUrl = match.groupValues[1].trim()
             if (tracks.none { it.url == subUrl }) {
-                tracks.add(Track(subUrl, "Legenda ${tracks.size + 1}"))
+                tracks.add(Track(subUrl, "Português (PT)"))
+                ptEncontrada = true
             }
         }
 
-        // Extração de Legendas - Camada 2: Tags HTML <track> nativas ocultas no iframe
+        // Caso a legenda não tenha a marcação [PT] na frente, faz a busca genérica,
+        // mas AGORA com a barreira [^,\[\]] para nunca juntar ficheiros diferentes.
+        if (!ptEncontrada) {
+            val srtRegex = Regex("""(https?://[^,\[\]"'\s<>]+?\.(?:srt|vtt))""")
+            srtRegex.findAll(textToSearch).forEach { match ->
+                val subUrl = match.groupValues[1].trim()
+                if (tracks.none { it.url == subUrl }) {
+                    tracks.add(Track(subUrl, "Legenda PT"))
+                }
+            }
+        }
+
+        // =========================================================================
+        // Extração de Legendas - Camada 2: Tags HTML <track> nativas ocultas
+        // =========================================================================
         val trackTagRegex = Regex("""<track[^>]+src=["'](https?://[^"']+)["'][^>]*>""")
         trackTagRegex.findAll(iframeHtml).forEach { match ->
-            val file = match.groupValues[1].replace("&amp;", "&")
+            // Limpeza extra para evitar sujidade no HTML
+            val file = match.groupValues[1].replace("&amp;", "&").substringBefore(",").substringBefore("[")
             if (tracks.none { it.url == file }) {
-                tracks.add(Track(file, "Legenda HTML ${tracks.size + 1}"))
+                tracks.add(Track(file, "Legenda PT (HTML)"))
             }
         }
 
-        // Extração de Legendas - Camada 3: Parse do JSON puro (caso a url não tenha terminação .srt óbvia)
+        // =========================================================================
+        // Extração de Legendas - Camada 3: Parse do JSON puro
+        // =========================================================================
         try {
             val json = JSONObject(normalized)
             secured = json.optString("securedLink", "").takeIf { it.startsWith("http") }
@@ -286,23 +315,31 @@ class JavRider : AnimeHttpSource() {
             if (subtitles != null) {
                 for (i in 0 until subtitles.length()) {
                     val subObj = subtitles.getJSONObject(i)
-                    val file = subObj.optString("file").replace("\\/", "/")
-                    val label = subObj.optString("label", "Português")
+                    // Limpeza preventiva extraindo até à primeira vírgula (se houver lixo)
+                    val file = subObj.optString("file").replace("\\/", "/").substringBefore(",").substringBefore("[")
+                    val label = subObj.optString("label", "Português (PT)")
+                    
                     if (file.startsWith("http") && tracks.none { it.url == file }) {
-                        tracks.add(Track(file, label))
+                        // Como pediu apenas PT, filtramos pela label ou adicionamos se for a única opção
+                        if (label.contains("pt", ignoreCase = true) || label.contains("português", ignoreCase = true) || tracks.isEmpty()) {
+                            tracks.add(Track(file, "Português (PT)"))
+                        }
                     }
                 }
             } else {
                 val subStr = json.optString("subtitle", "").ifEmpty { json.optString("subtitles", "") }
-                if (subStr.startsWith("http") && tracks.none { it.url == subStr }) {
-                    tracks.add(Track(subStr.replace("\\/", "/"), "Legenda Principal"))
+                val cleanSubStr = subStr.replace("\\/", "/").substringBefore(",").substringBefore("[")
+                if (cleanSubStr.startsWith("http") && tracks.none { it.url == cleanSubStr }) {
+                    tracks.add(Track(cleanSubStr, "Português (PT)"))
                 }
             }
         } catch (_: Exception) {
             // Não falha caso não seja JSON
         }
 
-        // Recuperar as streams m3u8 ou mp4 se a camada JSON falhou
+        // =========================================================================
+        // Recuperar as streams de Vídeo
+        // =========================================================================
         if (secured == null) {
             secured = Regex(""""securedLink"\s*:\s*"([^"]+)"""")
                 .find(normalized)?.groupValues?.get(1)
@@ -323,7 +360,7 @@ class JavRider : AnimeHttpSource() {
                 ?.let { if (it.startsWith("http")) it else "https://javplayers.com$it" }
         }
 
-        // Montagem do vídeo anexando a variável tracks populada
+        // Montagem do vídeo anexando a variável tracks populada e limpa
         if (secured != null) {
             videos.add(Video(secured, "Principal", secured, videoHeadersFor(iframeUrl), subtitleTracks = tracks))
         }
