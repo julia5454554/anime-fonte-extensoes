@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.all.pornhub
+package eu.kanade.tachiyomi.animeextension.en.pornhub
 
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
