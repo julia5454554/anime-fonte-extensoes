@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -23,22 +24,32 @@ class PornHub : ParsedAnimeHttpSource() {
 
     override val supportsLatest = true
 
-    override val client: OkHttpClient = network.client
+    override val client: OkHttpClient = network.client.newBuilder().build()
+
+    // Headers necessários para simular um navegador e evitar ser bloqueado ou redirecionado
+    override fun headersBuilder(): Headers.Builder {
+        return Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+            .add("Accept-Language", "en-US,en;q=0.9")
+            .add("Cookie", "age_verified=1; platform=pc")
+    }
 
     // ============================== POPULAR ==============================
 
     override fun popularAnimeRequest(page: Int): Request {
-        return GET("$baseUrl/video?o=mv&page=$page")
+        return GET("$baseUrl/video?o=mv&page=$page", headers)
     }
 
-    override fun popularAnimeSelector(): String = "ul.videos search-video-thumbs li, ul.videos li.pcVideoListItem, div.ph-thumbnail-card"
+    // Seletores abrangentes para cobrir diferentes estruturas de HTML do site
+    override fun popularAnimeSelector(): String = "ul.videos li, ul.search-video-thumbs li, div.ph-thumbnail-card, li.pcVideoListItem"
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
 
-        val rawUrl = element.select("a[href]").firstOrNull()?.attr("href")
-            ?: element.select("a").attr("href").takeIf { it.isNotBlank() }
-            ?: element.attr("data-href").takeIf { it.isNotBlank() }
+        // Tenta capturar a URL por diferentes seletores e atributos
+        val rawUrl = element.select("a[href*=/view_video.php]").firstOrNull()?.attr("href")
+            ?: element.select("a").firstOrNull()?.attr("href")
+            ?: element.attr("data-href")
             ?: ""
 
         if (rawUrl.isNotBlank()) {
@@ -47,26 +58,29 @@ class PornHub : ParsedAnimeHttpSource() {
             anime.url = ""
         }
 
-        val titleText = element.select("span.title, a.title, .videoTitle").text().ifBlank {
-            element.select("img").attr("alt")
+        // Título
+        val titleText = element.select("span.title, a.title, .videoTitle, img").attr("alt").ifBlank {
+            element.select("span.title, a.title, .videoTitle").text()
         }
         anime.title = titleText.ifBlank { "Sem título" }
 
-        val thumbUrl = element.select("img").attr("src").takeIf { it.isNotBlank() && !it.startsWith("data:") }
-            ?: element.select("img").attr("data-thumb_url").takeIf { it.isNotBlank() }
+        // Thumbnail / Capa
+        val thumbUrl = element.select("img").attr("data-thumb_url").takeIf { it.isNotBlank() }
             ?: element.select("img").attr("data-mediumproxy").takeIf { it.isNotBlank() }
+            ?: element.select("img").attr("data-src").takeIf { it.isNotBlank() }
+            ?: element.select("img").attr("src").takeIf { it.isNotBlank() && !it.startsWith("data:") }
             ?: ""
         anime.thumbnail_url = thumbUrl
 
         return anime
     }
 
-    override fun popularAnimeNextPageSelector(): String = "li.page_next a, a.relational[rel=next]"
+    override fun popularAnimeNextPageSelector(): String = "li.page_next a, a.relational[rel=next], a[class*=next]"
 
     // =============================== LATEST ===============================
 
     override fun latestUpdatesRequest(page: Int): Request {
-        return GET("$baseUrl/video?o=mr&page=$page")
+        return GET("$baseUrl/video?o=mr&page=$page", headers)
     }
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
@@ -79,7 +93,7 @@ class PornHub : ParsedAnimeHttpSource() {
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-        return GET("$baseUrl/video/search?search=$encodedQuery&page=$page")
+        return GET("$baseUrl/video/search?search=$encodedQuery&page=$page", headers)
     }
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
@@ -93,7 +107,7 @@ class PornHub : ParsedAnimeHttpSource() {
     override fun animeDetailsParse(document: Document): SAnime {
         val anime = SAnime.create()
         
-        anime.title = document.select("h1.inlineFree, .video-wrapper h1").text().ifBlank { "Vídeo" }
+        anime.title = document.select("h1.inlineFree, .video-wrapper h1, h1").text().ifBlank { "Vídeo" }
         anime.author = document.select(".userInfo .usernameWrap a, .video-uploader-name").text()
         anime.description = document.select(".video-description, .descriptionContainer").text()
         anime.genre = document.select(".categoriesWrapper a, .tagsWrapper a").joinToString { it.text() }
@@ -128,7 +142,6 @@ class PornHub : ParsedAnimeHttpSource() {
         val document = Jsoup.parse(response.body.string())
         val videoList = mutableListOf<Video>()
 
-        // Converte para lista tradicional para evitar ambiguidade de iterator no Kotlin
         val scripts = document.select("script").toList()
         var scriptData = ""
         
