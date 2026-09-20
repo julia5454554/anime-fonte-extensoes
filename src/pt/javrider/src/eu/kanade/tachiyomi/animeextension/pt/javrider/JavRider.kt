@@ -10,7 +10,9 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import okhttp3.Headers
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
@@ -31,7 +33,11 @@ class JavRider : AnimeHttpSource() {
 
     private val desktopUa =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+
+    private val mobileUa =
+        "Mozilla/5.0 (Linux; Android 13; 23049PCD8G) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36"
 
     private val apiHeaders: Headers by lazy {
         headers.newBuilder()
@@ -173,29 +179,21 @@ class JavRider : AnimeHttpSource() {
     override fun videoListParse(response: Response): List<Video> {
         val videos = mutableListOf<Video>()
         val referer = responseUrlOrDefault(response)
-        Log.e("JavRider", "=== VIDEO START referer=$referer ===")
         try {
             val document = safeDocument(response)
-            Log.e("JavRider", "VIDEO doc title=${document.title()}")
             val iframe = document.selectFirst("div.player-3rdparty iframe, iframe[src*=javplayers]")
                 ?: document.selectFirst("iframe[src]")
-            Log.e("JavRider", "VIDEO iframe ele=${iframe?.outerHtml()?.take(300)}")
             val iframeSrc = iframe?.let {
                 it.attr("src").ifEmpty { it.attr("data-lazy-src") }
             }.orEmpty()
-            Log.e("JavRider", "VIDEO iframeSrc=$iframeSrc")
 
             if (iframeSrc.startsWith("http")) {
-                val extracted = extractFromPlayer(iframeSrc, referer)
-                Log.e("JavRider", "VIDEO extracted=${extracted.size}")
-                videos.addAll(extracted)
-            } else {
-                Log.e("JavRider", "VIDEO iframeSrc não começa com http")
+                videos.addAll(extractFromPlayer(iframeSrc, referer))
             }
         } catch (e: Exception) {
-            Log.e("JavRider", "VIDEO exception: ${e.message}", e)
+            Log.e("JavRider", "VIDEO erro: ${e.message}", e)
         }
-        Log.e("JavRider", "=== VIDEO END total=${videos.size} ===")
+        Log.e("JavRider", "VIDEO total=${videos.size}")
         return videos
     }
 
@@ -211,32 +209,58 @@ class JavRider : AnimeHttpSource() {
         val videos = mutableListOf<Video>()
         val hash = Regex("""/video/([a-f0-9]{16,})""")
             .find(iframeUrl)?.groupValues?.get(1)
-        Log.e("JavRider", "PLAYER hash=$hash")
-        if (hash == null) return videos
+            ?: return videos
 
-        // Passo 1: visitar iframe (popula cookies)
+        // Passo 1: visita a página do iframe (popula cookies no CookieJar)
         try {
             val pageReq = Request.Builder()
                 .url(iframeUrl)
-                .headers(playerPageHeaders(referer))
+                .headers(fullBrowserHeaders(referer, desktopUa))
                 .build()
-            val pageBody = client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
-            Log.e("JavRider", "PLAYER iframe page len=${pageBody.length}")
-        } catch (e: Exception) {
-            Log.e("JavRider", "PLAYER iframe erro: ${e.message}")
+            client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
+        } catch (_: Exception) {
+            // segue
         }
 
-        // Passo 2: API getVideo
-        val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
-        val body = tryApiGet(apiUrl, iframeUrl)
-        Log.e("JavRider", "PLAYER api body[${body.length}] first500=${body.take(500)}")
-        if (body.isBlank()) {
-            Log.e("JavRider", "PLAYER body vazio, saindo")
-            return videos
-        }
+        val apiBase = "https://javplayers.com/player/index.php"
 
-        // Passo 3: extrai securedLink + videoSource
-        val normalized = body.replace("\\/", "/").replace("\\u002F", "/")
+        // Tenta várias combinações: GET/POST × desktop/mobile × com/sem headers extras
+        val attempts = mutableListOf<Pair<String, String>>()
+
+        // 1) GET desktop com headers full
+        attempts.add(runAttempt(apiBase + "?data=$hash&do=getVideo", "GET-full-desktop", iframeUrl, desktopUa))
+
+        // 2) POST desktop com body
+        val postBody = "data=$hash&do=getVideo"
+            .toRequestBody("application/x-www-form-urlencoded; charset=UTF-8".toMediaType())
+        attempts.add(runPostAttempt(apiBase, "POST-desktop", iframeUrl, desktopUa, postBody))
+
+        // 3) GET mobile
+        attempts.add(runAttempt(apiBase + "?data=$hash&do=getVideo", "GET-mobile", iframeUrl, mobileUa))
+
+        // 4) POST mobile
+        attempts.add(runPostAttempt(apiBase, "POST-mobile", iframeUrl, mobileUa, postBody))
+
+        // Escolhe o melhor resultado (que tenha JSON com securedLink)
+        var bestBody = ""
+        var bestLabel = ""
+        for ((label, body) in attempts) {
+            if (body.contains("securedLink", true) || body.contains("videoSource", true)) {
+                bestBody = body
+                bestLabel = label
+                break
+            }
+            if (body.isNotBlank() && !body.trimStart().startsWith("<") && body.length > bestBody.length) {
+                bestBody = body
+                bestLabel = label
+            }
+        }
+        Log.e("JavRider", "PLAYER best=$bestLabel len=${bestBody.length}")
+
+        if (bestBody.isBlank()) return videos
+
+        // Extrai securedLink / videoSource
+        val normalized = bestBody.replace("\\/", "/").replace("\\u002F", "/")
         var secured: String? = null
         var source: String? = null
 
@@ -259,46 +283,94 @@ class JavRider : AnimeHttpSource() {
             secured = Regex("""(https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+)""")
                 .find(normalized)?.groupValues?.get(1)
         }
-        Log.e("JavRider", "PLAYER secured=$secured")
-        Log.e("JavRider", "PLAYER source=$source")
+        if (secured == null) {
+            secured = Regex("""["']([^"']*master\.m3u8[^"']*)["']""")
+                .find(normalized)?.groupValues?.get(1)?.let {
+                    if (it.startsWith("http")) it else "https://javplayers.com$it"
+                }
+        }
+
+        Log.e("JavRider", "PLAYER secured=$secured source=$source")
 
         val usedUrl = secured ?: source
         if (usedUrl == null) {
-            Log.e("JavRider", "PLAYER nenhum link no body")
+            // fallback bruto: procura /m3/ no HTML do iframe inteiro
+            val htmlFull = tryFullIframeHtml(iframeUrl, referer)
+            val m3 = Regex("""(https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+)""")
+                .find(htmlFull)?.groupValues?.get(1)
+            Log.e("JavRider", "PLAYER fallback m3 do HTML=$m3")
+            if (m3 == null) return videos
+            videos.add(Video(m3, "Auto", m3, videoHeadersFor(iframeUrl)))
             return videos
         }
 
-        // Passo 4: legendas
         val subtitles = extractSubtitles(normalized)
-
-        // Passo 5: m3u8 master
         val masterBody = tryApiGet(usedUrl, "https://javplayers.com/")
         Log.e("JavRider", "PLAYER master[${masterBody.length}] first400=${masterBody.take(400)}")
 
         val variants = parseM3u8Master(masterBody, usedUrl)
-        Log.e("JavRider", "PLAYER variants=${variants.size} labels=${variants.map { it.first }}")
+        Log.e("JavRider", "PLAYER variants=${variants.size}")
 
         if (variants.isNotEmpty()) {
             variants.forEach { (label, url) ->
                 videos.add(Video(url, label, url, videoHeadersFor(iframeUrl), subtitleTracks = subtitles))
             }
         } else {
-            Log.e("JavRider", "PLAYER usando master direto")
             videos.add(Video(usedUrl, "Auto", usedUrl, videoHeadersFor(iframeUrl), subtitleTracks = subtitles))
         }
         return videos
     }
 
+    private fun tryFullIframeHtml(iframeUrl: String, referer: String): String = try {
+        val req = Request.Builder()
+            .url(iframeUrl)
+            .headers(fullBrowserHeaders(referer, desktopUa))
+            .build()
+        client.newCall(req).execute().use { it.body?.string().orEmpty() }
+    } catch (_: Exception) {
+        ""
+    }
+
+    private fun runAttempt(url: String, label: String, referer: String, ua: String): Pair<String, String> {
+        return try {
+            val req = Request.Builder()
+                .url(url)
+                .headers(fullBrowserHeaders(referer, ua))
+                .build()
+            val resp = client.newCall(req).execute()
+            val body = resp.body?.string().orEmpty()
+            Log.e("JavRider", "ATTEMPT[$label] code=${resp.code} len=${body.length} first80=${body.take(80).replace("\n", " ")}")
+            label to body
+        } catch (e: Exception) {
+            Log.e("JavRider", "ATTEMPT[$label] erro=${e.message}")
+            label to ""
+        }
+    }
+
+    private fun runPostAttempt(url: String, label: String, referer: String, ua: String, body: okhttp3.RequestBody): Pair<String, String> {
+        return try {
+            val req = Request.Builder()
+                .url(url)
+                .headers(fullBrowserHeaders(referer, ua))
+                .post(body)
+                .build()
+            val resp = client.newCall(req).execute()
+            val respBody = resp.body?.string().orEmpty()
+            Log.e("JavRider", "ATTEMPT[$label] code=${resp.code} len=${respBody.length} first80=${respBody.take(80).replace("\n", " ")}")
+            label to respBody
+        } catch (e: Exception) {
+            Log.e("JavRider", "ATTEMPT[$label] erro=${e.message}")
+            label to ""
+        }
+    }
+
     private fun extractSubtitles(body: String): List<Track> {
         val tracks = mutableListOf<Track>()
         val seen = mutableSetOf<String>()
-
         Regex("""https?://[^"'\s]+\.srt""")
-            .findAll(body).forEach { match ->
-                val url = match.value
-                if (seen.add(url)) tracks.add(Track(url, "Português"))
+            .findAll(body).forEach { m ->
+                if (seen.add(m.value)) tracks.add(Track(m.value, "Português"))
             }
-        Log.e("JavRider", "SUBS found=${tracks.size}")
         return tracks
     }
 
@@ -337,26 +409,29 @@ class JavRider : AnimeHttpSource() {
     }
 
     private fun tryApiGet(url: String, referer: String): String = try {
-        val req = Request.Builder().url(url).headers(apiHeadersFor(referer)).build()
+        val req = Request.Builder()
+            .url(url)
+            .headers(fullBrowserHeaders(referer, desktopUa))
+            .build()
         client.newCall(req).execute().use { it.body?.string().orEmpty() }
     } catch (e: Exception) {
         Log.e("JavRider", "GET erro: ${e.message}")
         ""
     }
 
-    private fun playerPageHeaders(referer: String): Headers = Headers.Builder()
-        .add("User-Agent", desktopUa)
-        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
-        .add("Referer", referer)
-        .build()
-
-    private fun apiHeadersFor(referer: String): Headers = Headers.Builder()
-        .add("User-Agent", desktopUa)
-        .add("Accept", "application/json, text/javascript, */*; q=0.01")
+    /** Headers que o Chrome envia numa XHR normal para o javplayers. */
+    private fun fullBrowserHeaders(referer: String, ua: String): Headers = Headers.Builder()
+        .add("User-Agent", ua)
+        .add("Accept", "*/*")
         .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
         .add("Referer", referer)
         .add("Origin", "https://javplayers.com")
         .add("X-Requested-With", "XMLHttpRequest")
+        .add("Sec-Fetch-Dest", "empty")
+        .add("Sec-Fetch-Mode", "cors")
+        .add("Sec-Fetch-Site", "same-origin")
+        .add("sec-ch-ua", "\"Chromium\";v=\"139\", \"Not;A=Brand\";v=\"99\"")
+        .add("sec-ch-ua-mobile", if (ua.contains("Mobile")) "?1" else "?0")
+        .add("sec-ch-ua-platform", if (ua.contains("Windows")) "\"Windows\"" else "\"Android\"")
         .build()
 }
