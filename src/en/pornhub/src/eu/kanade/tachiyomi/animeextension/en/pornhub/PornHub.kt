@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.en.pornhub
+Package eu.kanade.tachiyomi.animeextension.en.pornhub
 
 import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
