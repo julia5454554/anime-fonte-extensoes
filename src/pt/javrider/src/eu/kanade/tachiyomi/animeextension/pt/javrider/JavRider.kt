@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.network.GET
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONArray
@@ -211,7 +212,6 @@ class JavRider : AnimeHttpSource() {
             .find(iframeUrl)?.groupValues?.get(1)
             ?: return videos
 
-        // Passo 1: visita a página do iframe (popula cookies no CookieJar)
         try {
             val pageReq = Request.Builder()
                 .url(iframeUrl)
@@ -223,25 +223,16 @@ class JavRider : AnimeHttpSource() {
         }
 
         val apiBase = "https://javplayers.com/player/index.php"
-
-        // Tenta várias combinações: GET/POST × desktop/mobile × com/sem headers extras
-        val attempts = mutableListOf<Pair<String, String>>()
-
-        // 1) GET desktop com headers full
-        attempts.add(runAttempt(apiBase + "?data=$hash&do=getVideo", "GET-full-desktop", iframeUrl, desktopUa))
-
-        // 2) POST desktop com body
         val postBody = "data=$hash&do=getVideo"
             .toRequestBody("application/x-www-form-urlencoded; charset=UTF-8".toMediaType())
-        attempts.add(runPostAttempt(apiBase, "POST-desktop", iframeUrl, desktopUa, postBody))
 
-        // 3) GET mobile
-        attempts.add(runAttempt(apiBase + "?data=$hash&do=getVideo", "GET-mobile", iframeUrl, mobileUa))
+        val attempts = listOf(
+            runAttempt("$apiBase?data=$hash&do=getVideo", "GET-full-desktop", iframeUrl, desktopUa),
+            runPostAttempt(apiBase, "POST-desktop", iframeUrl, desktopUa, postBody),
+            runAttempt("$apiBase?data=$hash&do=getVideo", "GET-mobile", iframeUrl, mobileUa),
+            runPostAttempt(apiBase, "POST-mobile", iframeUrl, mobileUa, postBody),
+        )
 
-        // 4) POST mobile
-        attempts.add(runPostAttempt(apiBase, "POST-mobile", iframeUrl, mobileUa, postBody))
-
-        // Escolhe o melhor resultado (que tenha JSON com securedLink)
         var bestBody = ""
         var bestLabel = ""
         for ((label, body) in attempts) {
@@ -259,7 +250,6 @@ class JavRider : AnimeHttpSource() {
 
         if (bestBody.isBlank()) return videos
 
-        // Extrai securedLink / videoSource
         val normalized = bestBody.replace("\\/", "/").replace("\\u002F", "/")
         var secured: String? = null
         var source: String? = null
@@ -294,7 +284,6 @@ class JavRider : AnimeHttpSource() {
 
         val usedUrl = secured ?: source
         if (usedUrl == null) {
-            // fallback bruto: procura /m3/ no HTML do iframe inteiro
             val htmlFull = tryFullIframeHtml(iframeUrl, referer)
             val m3 = Regex("""(https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+)""")
                 .find(htmlFull)?.groupValues?.get(1)
@@ -331,37 +320,33 @@ class JavRider : AnimeHttpSource() {
         ""
     }
 
-    private fun runAttempt(url: String, label: String, referer: String, ua: String): Pair<String, String> {
-        return try {
-            val req = Request.Builder()
-                .url(url)
-                .headers(fullBrowserHeaders(referer, ua))
-                .build()
-            val resp = client.newCall(req).execute()
-            val body = resp.body?.string().orEmpty()
-            Log.e("JavRider", "ATTEMPT[$label] code=${resp.code} len=${body.length} first80=${body.take(80).replace("\n", " ")}")
-            label to body
-        } catch (e: Exception) {
-            Log.e("JavRider", "ATTEMPT[$label] erro=${e.message}")
-            label to ""
-        }
+    private fun runAttempt(url: String, label: String, referer: String, ua: String): Pair<String, String> = try {
+        val req = Request.Builder()
+            .url(url)
+            .headers(fullBrowserHeaders(referer, ua))
+            .build()
+        val resp = client.newCall(req).execute()
+        val body = resp.body?.string().orEmpty()
+        Log.e("JavRider", "ATTEMPT[$label] code=${resp.code} len=${body.length} first80=${body.take(80).replace("\n", " ")}")
+        label to body
+    } catch (e: Exception) {
+        Log.e("JavRider", "ATTEMPT[$label] erro=${e.message}")
+        label to ""
     }
 
-    private fun runPostAttempt(url: String, label: String, referer: String, ua: String, body: okhttp3.RequestBody): Pair<String, String> {
-        return try {
-            val req = Request.Builder()
-                .url(url)
-                .headers(fullBrowserHeaders(referer, ua))
-                .post(body)
-                .build()
-            val resp = client.newCall(req).execute()
-            val respBody = resp.body?.string().orEmpty()
-            Log.e("JavRider", "ATTEMPT[$label] code=${resp.code} len=${respBody.length} first80=${respBody.take(80).replace("\n", " ")}")
-            label to respBody
-        } catch (e: Exception) {
-            Log.e("JavRider", "ATTEMPT[$label] erro=${e.message}")
-            label to ""
-        }
+    private fun runPostAttempt(url: String, label: String, referer: String, ua: String, body: RequestBody): Pair<String, String> = try {
+        val req = Request.Builder()
+            .url(url)
+            .headers(fullBrowserHeaders(referer, ua))
+            .post(body)
+            .build()
+        val resp = client.newCall(req).execute()
+        val respBody = resp.body?.string().orEmpty()
+        Log.e("JavRider", "ATTEMPT[$label] code=${resp.code} len=${respBody.length} first80=${respBody.take(80).replace("\n", " ")}")
+        label to respBody
+    } catch (e: Exception) {
+        Log.e("JavRider", "ATTEMPT[$label] erro=${e.message}")
+        label to ""
     }
 
     private fun extractSubtitles(body: String): List<Track> {
@@ -419,7 +404,6 @@ class JavRider : AnimeHttpSource() {
         ""
     }
 
-    /** Headers que o Chrome envia numa XHR normal para o javplayers. */
     private fun fullBrowserHeaders(referer: String, ua: String): Headers = Headers.Builder()
         .add("User-Agent", ua)
         .add("Accept", "*/*")
