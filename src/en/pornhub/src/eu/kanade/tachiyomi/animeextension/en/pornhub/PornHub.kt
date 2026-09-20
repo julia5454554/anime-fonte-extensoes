@@ -7,56 +7,52 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-class PornHub : ParsedAnimeHttpSource() {
+class VideoHub : ParsedAnimeHttpSource() {
 
     override val name = "PornHub"
-    override val baseUrl = "https://www.pornhub.com"
+    override val baseUrl = "https://pornhub.com"
     override val lang = "en"
     override val supportsLatest = false
 
-    private val json = Json {
-        ignoreUnknownKeys = true
-    }
-
     override fun popularAnimeRequest(page: Int): Request =
-        GET("$baseUrl/video?page=$page", headers)
+        GET("$baseUrl/videos?page=$page", headers)
 
     override fun popularAnimeSelector(): String =
-        "div.gridWrapper li.pcVideoListItem"
+        "li[data-video-id]"
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         return SAnime.create().apply {
-            title = element.selectFirst("img")?.attr("alt").orEmpty()
+            val link = element.selectFirst("a.video-link")
+
+            title = link?.text()?.trim() ?: "Untitled"
 
             thumbnail_url =
-                element.selectFirst("img")?.attr("src")
+                element.selectFirst("img.thumbnail")
+                    ?.attr("src")
 
             setUrlWithoutDomain(
-                element.selectFirst("a")?.attr("href").orEmpty(),
+                link?.attr("href") ?: "",
             )
         }
     }
 
-    override fun popularAnimeNextPageSelector(): String? =
-        "a.page_next"
+    override fun popularAnimeNextPageSelector(): String =
+        "a.next-page"
 
     override fun searchAnimeRequest(
         page: Int,
         query: String,
         filters: AnimeFilterList,
-    ): Request {
-        return GET(
-            "$baseUrl/video/search?search=$query&page=$page",
+    ): Request =
+        GET(
+            "$baseUrl/search?q=$query&page=$page",
             headers,
         )
-    }
 
     override fun searchAnimeSelector(): String =
         popularAnimeSelector()
@@ -65,27 +61,31 @@ class PornHub : ParsedAnimeHttpSource() {
         element: Element,
     ): SAnime = popularAnimeFromElement(element)
 
-    override fun searchAnimeNextPageSelector(): String? =
+    override fun searchAnimeNextPageSelector(): String =
         popularAnimeNextPageSelector()
 
     override fun animeDetailsParse(document: Document): SAnime {
         return SAnime.create().apply {
             title =
-                document.selectFirst("h1")?.text().orEmpty()
+                document.selectFirst("h1.video-title")
+                    ?.text()
+                    .orEmpty()
 
             description =
-                document.selectFirst(
-                    "meta[property=og:description]",
-                )?.attr("content")
+                document.selectFirst("div.description")
+                    ?.text()
 
             thumbnail_url =
-                document.selectFirst(
-                    "img.videoElementPoster",
-                )?.attr("src")
+                document.selectFirst("meta[property=og:image]")
+                    ?.attr("content")
 
             genre =
-                document.select("div.tagsWrapper a")
+                document.select("a.tag")
                     .joinToString(", ") { it.text() }
+
+            author =
+                document.selectFirst("a.channel-name")
+                    ?.text()
 
             status = SAnime.COMPLETED
         }
@@ -98,84 +98,70 @@ class PornHub : ParsedAnimeHttpSource() {
             SEpisode.create().apply {
                 name = "Video"
                 setUrlWithoutDomain(
-                    response.request.url.toString(),
+                    response.request.url.toString()
+                        .removePrefix(baseUrl),
                 )
             },
         )
     }
 
-    override fun episodeListSelector() =
+    override fun episodeListSelector(): String =
         throw UnsupportedOperationException()
 
-    override fun episodeFromElement(element: Element) =
+    override fun episodeFromElement(
+        element: Element,
+    ): SEpisode =
         throw UnsupportedOperationException()
 
     override fun videoListParse(
         response: Response,
     ): List<Video> {
+
         val document = response.asJsoup()
 
-        val script =
-            document.selectFirst(
-                "script:containsData(var flashvars)",
-            )?.data()
+        val mp4Url =
+            document.selectFirst("video source")
+                ?.attr("src")
                 ?: return emptyList()
 
-        val flashvarsJson = script
-            .substringAfter("var flashvars = ")
-            .substringBefore(";")
-
-        val flashvars =
-            json.decodeFromString<Phub>(flashvarsJson)
-
-        return flashvars.mediaDefinitions
-            ?.filter {
-                !it.videoUrl.isNullOrBlank()
-            }
-            ?.map {
-                Video(
-                    url = it.videoUrl!!,
-                    quality = "${it.quality}",
-                    videoUrl = it.videoUrl,
-                )
-            }
-            ?: emptyList()
+        return listOf(
+            Video(
+                url = mp4Url,
+                quality = "720p",
+                videoUrl = mp4Url,
+            ),
+        )
     }
 
-    override fun videoListSelector() =
+    override fun videoListSelector(): String =
         throw UnsupportedOperationException()
 
-    override fun videoUrlParse(document: Document) =
+    override fun videoUrlParse(
+        document: Document,
+    ): String =
         throw UnsupportedOperationException()
 
-    override fun videoFromElement(element: Element) =
+    override fun videoFromElement(
+        element: Element,
+    ): Video =
         throw UnsupportedOperationException()
 
-    override fun latestUpdatesRequest(page: Int) =
+    override fun latestUpdatesRequest(
+        page: Int,
+    ): Request =
         throw UnsupportedOperationException()
 
-    override fun latestUpdatesSelector() =
+    override fun latestUpdatesSelector(): String =
         throw UnsupportedOperationException()
 
     override fun latestUpdatesFromElement(
         element: Element,
-    ) = throw UnsupportedOperationException()
-
-    override fun latestUpdatesNextPageSelector() =
+    ): SAnime =
         throw UnsupportedOperationException()
 
-    override fun getFilterList() =
+    override fun latestUpdatesNextPageSelector(): String =
+        throw UnsupportedOperationException()
+
+    override fun getFilterList(): AnimeFilterList =
         AnimeFilterList()
 }
-
-@Serializable
-data class Phub(
-    val mediaDefinitions: List<PhubVideo>? = null,
-)
-
-@Serializable
-data class PhubVideo(
-    val format: String? = null,
-    val videoUrl: String? = null,
-    val quality: String? = null,
-)
