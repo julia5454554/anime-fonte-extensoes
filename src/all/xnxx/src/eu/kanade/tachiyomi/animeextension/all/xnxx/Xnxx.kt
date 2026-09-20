@@ -16,9 +16,6 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class Xnxx :
     ParsedAnimeHttpSource(),
@@ -34,33 +31,38 @@ class Xnxx :
 
     private val preferences by getPreferencesLazy()
 
-    override fun popularAnimeSelector(): String = "div[id*='video_'].thumb-block"
+    // Seleciona apenas os blocos de vídeo, ignorando as categorias da home
+    override fun popularAnimeSelector(): String = "div.mozaique > div.thumb-block:not(.thumb-cat)"
 
+    // Altera a rota para a busca dos mais vistos/populares por página
     override fun popularAnimeRequest(page: Int): Request {
-        val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
-        val currentDate = sdf.format(Date())
-        return GET("$baseUrl/best/$currentDate/${page - 1}")
+        val pagePath = if (page > 1) "/${page - 1}" else ""
+        return GET("$baseUrl/best$pagePath", headers)
     }
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
-        anime.setUrlWithoutDomain("$baseUrl${element.select("div.thumb-inside div.thumb > a").attr("href")}")
-        anime.title = element.select("div.thumb-under > p > a").text()
-        anime.thumbnail_url = element.select("div.thumb-inside div.thumb img[id*='pic_']").attr("data-src")
+        val linkElement = element.selectFirst("div.thumb-under > p > a, div.thumb > a")
+        
+        anime.setUrlWithoutDomain(linkElement?.attr("href") ?: "")
+        anime.title = linkElement?.attr("title")?.ifEmpty { linkElement.text() } ?: element.select("p.title").text()
+        
+        // Garante a extração da thumbnail testando data-src e src
+        val img = element.selectFirst("div.thumb img")
+        anime.thumbnail_url = img?.attr("data-src")?.ifEmpty { img.attr("src") } ?: ""
+        
         return anime
     }
 
-    override fun popularAnimeNextPageSelector(): String = "#content-thumbs div.pagination ul li a.next"
+    override fun popularAnimeNextPageSelector(): String = "div.pagination ul li a.next, #content-thumbs div.pagination ul li a.next"
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val episodes = mutableListOf<SEpisode>()
         val episode = SEpisode.create().apply {
             name = "Video"
             setUrlWithoutDomain(response.request.url.toString())
             date_upload = System.currentTimeMillis()
         }
-        episodes.add(episode)
-        return episodes
+        return listOf(episode)
     }
 
     override fun episodeListSelector() = throw Exception("not used")
@@ -73,11 +75,18 @@ class Xnxx :
         val lowQuality = sourcesJson.substringAfter("VideoUrlLow('").substringBefore("')")
         val hlsQuality = sourcesJson.substringAfter("setVideoHLS('").substringBefore("')")
         val highQuality = sourcesJson.substringAfter("VideoUrlHigh('").substringBefore("')")
-        return listOf(
-            Video(lowQuality, "Low", lowQuality),
-            Video(hlsQuality, "HLS", hlsQuality),
-            Video(highQuality, "High", highQuality),
-        )
+        
+        val videos = mutableListOf<Video>()
+        if (highQuality.isNotBlank() && highQuality.startsWith("http")) {
+            videos.add(Video(highQuality, "High", highQuality))
+        }
+        if (hlsQuality.isNotBlank() && hlsQuality.startsWith("http")) {
+            videos.add(Video(hlsQuality, "HLS", hlsQuality))
+        }
+        if (lowQuality.isNotBlank() && lowQuality.startsWith("http")) {
+            videos.add(Video(lowQuality, "Low", lowQuality))
+        }
+        return videos
     }
 
     override fun videoListSelector() = throw Exception("not used")
@@ -105,14 +114,15 @@ class Xnxx :
     }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        val tagFilter = filters.find { it is Tags } as Tags
+        val tagFilter = filters.find { it is Tags } as? Tags
         val calcPage = page - 1
         return when {
             query.isNotBlank() -> GET("$baseUrl/search/hits/$query/$calcPage", headers)
-            tagFilter.state.isNotBlank() -> GET("$baseUrl/search/hits/${tagFilter.state}/$calcPage")
+            tagFilter != null && tagFilter.state.isNotBlank() -> GET("$baseUrl/search/hits/${tagFilter.state}/$calcPage", headers)
             else -> popularAnimeRequest(page)
         }
     }
+
     override fun searchAnimeFromElement(element: Element) = popularAnimeFromElement(element)
 
     override fun searchAnimeNextPageSelector(): String = popularAnimeNextPageSelector()
