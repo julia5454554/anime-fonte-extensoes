@@ -1,18 +1,17 @@
 package eu.kanade.tachiyomi.animeextension.en.pornhub
 
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
-import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.asJsoup
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import rx.Observable
 
 class PornHub : ParsedAnimeHttpSource() {
 
@@ -37,7 +36,6 @@ class PornHub : ParsedAnimeHttpSource() {
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
 
-        // Extração segura da URL para evitar NullPointerException nas linhas 66/88
         val rawUrl = element.select("a[href]").firstOrNull()?.attr("href")
             ?: element.select("a").attr("href").takeIf { it.isNotBlank() }
             ?: element.attr("data-href").takeIf { it.isNotBlank() }
@@ -49,13 +47,11 @@ class PornHub : ParsedAnimeHttpSource() {
             anime.url = ""
         }
 
-        // Extração segura do Título
         val titleText = element.select("span.title, a.title, .videoTitle").text().ifBlank {
             element.select("img").attr("alt")
         }
         anime.title = titleText.ifBlank { "Sem título" }
 
-        // Extração segura da Capa (Thumbnail)
         val thumbUrl = element.select("img").attr("src").takeIf { it.isNotBlank() && !it.startsWith("data:") }
             ?: element.select("img").attr("data-thumb_url").takeIf { it.isNotBlank() }
             ?: element.select("img").attr("data-mediumproxy").takeIf { it.isNotBlank() }
@@ -82,7 +78,6 @@ class PornHub : ParsedAnimeHttpSource() {
     // =============================== SEARCH ===============================
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        // Correção do parâmetro de busca para evitar o Erro HTTP 404
         val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
         return GET("$baseUrl/video/search?search=$encodedQuery&page=$page")
     }
@@ -123,13 +118,28 @@ class PornHub : ParsedAnimeHttpSource() {
 
     // =============================== VIDEOS ===============================
 
+    // Implementação dos membros abstratos obrigatórios de ParsedAnimeHttpSource
+    override fun videoListSelector(): String = "html"
+
+    override fun videoFromElement(element: Element): Video {
+        throw UnsupportedOperationException("Não utilizado; extração feita via videoListParse")
+    }
+
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
 
-        // Procura os links do player HLS (.m3u8) injetados dentro das tags <script>
-        val scriptData = document.select("script:containsData(flashvars)").firstOrNull()?.data() ?: ""
-        
+        // Extrai os scripts da página com segurança
+        val scripts = document.select("script")
+        var scriptData = ""
+        for (script in scripts) {
+            val data = script.data()
+            if (data.contains("flashvars")) {
+                scriptData = data
+                break
+            }
+        }
+
         val hlsRegex = """"videoUrl"\s*:\s*"([^"]+)"""".toRegex()
         val matches = hlsRegex.findAll(scriptData)
 
