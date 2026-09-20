@@ -11,7 +11,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
-import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -139,11 +138,13 @@ class PornHub : ParsedAnimeHttpSource() {
         val html = response.body.string()
         val videoList = mutableListOf<Video>()
 
+        // Header ni Referer to User-Agent o kanarazu tsuika site HTTP 410 / 403 o防gu
         val videoHeaders = headersBuilder()
-            .add("Referer", response.request.url.toString())
+            .set("Referer", response.request.url.toString())
+            .set("Origin", baseUrl)
             .build()
 
-        // 1. Tentar extrair do objeto JSON mediaDefinitions usando Regex no HTML completo
+        // 1. Json Array parsing
         val mediaDefinitionsRegex = """"mediaDefinitions"\s*:\s*(\[.*?\])""".toRegex(RegexOption.DOT_MATCHES_ALL)
         val match = mediaDefinitionsRegex.find(html)
 
@@ -164,18 +165,18 @@ class PornHub : ParsedAnimeHttpSource() {
 
                     if (videoUrl.isNotBlank()) {
                         videoUrl = unescapeUrl(videoUrl)
-                        val label = if (quality.isNotBlank()) "Qualidade $quality" else "HLS / MP4 ${i + 1}"
+                        val label = if (quality.isNotBlank()) "Qualidade $quality" else "HLS ${i + 1}"
                         if (videoList.none { it.url == videoUrl }) {
                             videoList.add(Video(videoUrl, label, videoUrl, headers = videoHeaders))
                         }
                     }
                 }
             } catch (_: Exception) {
-                // Falha no parsing do JSON
+                // Ignore parse errors
             }
         }
 
-        // 2. Fallback via regex direto para qualquer padrao "videoUrl":"https..."
+        // 2. Fallback regex search
         if (videoList.isEmpty()) {
             val urlRegex = """"videoUrl"\s*:\s*"([^"]+)"""".toRegex()
             val matches = urlRegex.findAll(html)
