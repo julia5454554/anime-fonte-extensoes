@@ -12,7 +12,6 @@ import eu.kanade.tachiyomi.network.GET
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
-import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONArray
@@ -30,15 +29,10 @@ class JavRider : AnimeHttpSource() {
 
     private val apiUrl = "$baseUrl/wp-json/wp/v2"
     private val embedParam = "wp:featuredmedia"
-    private val ptCategoryId = "135"
 
     private val desktopUa =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
-
-    private val mobileUa =
-        "Mozilla/5.0 (Linux; Android 13; 23049PCD8G) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36"
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     private val apiHeaders: Headers by lazy {
         headers.newBuilder()
@@ -78,15 +72,16 @@ class JavRider : AnimeHttpSource() {
     // ==================== LISTAGEM ====================
 
     override fun popularAnimeRequest(page: Int): Request {
-        val url = "$apiUrl/posts?categories=$ptCategoryId&per_page=24&page=$page&_embed=$embedParam"
+        // Adicionado &lang=pt para forçar a API a trazer conteúdo PT
+        val url = "$apiUrl/posts?per_page=24&page=$page&_embed=$embedParam&lang=pt"
         return GET(url, apiHeaders)
     }
 
     override fun popularAnimeParse(response: Response): AnimesPage = parsePosts(response)
 
     override fun latestUpdatesRequest(page: Int): Request {
-        val url = "$apiUrl/posts?categories=$ptCategoryId&per_page=24&page=$page" +
-            "&orderby=date&order=desc&_embed=$embedParam"
+        val url = "$apiUrl/posts?per_page=24&page=$page&orderby=date&order=desc" +
+            "&_embed=$embedParam&lang=pt"
         return GET(url, apiHeaders)
     }
 
@@ -94,8 +89,7 @@ class JavRider : AnimeHttpSource() {
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val q = URLEncoder.encode(query, "UTF-8")
-        val url = "$apiUrl/posts?search=$q&categories=$ptCategoryId&per_page=24&page=$page" +
-            "&_embed=$embedParam"
+        val url = "$apiUrl/posts?search=$q&per_page=24&page=$page&_embed=$embedParam&lang=pt"
         return GET(url, apiHeaders)
     }
 
@@ -109,18 +103,21 @@ class JavRider : AnimeHttpSource() {
             val list = ArrayList<SAnime>(json.length())
             for (i in 0 until json.length()) {
                 val post = json.getJSONObject(i)
-                val title = post.getJSONObject("title").getString("rendered")
-                    .replace(Regex("<[^>]+>"), "").trim()
+                val link = post.optString("link", "")
+                
+                // Filtro extremo: Se a url não for da versão em português, descartar
+                if (!link.contains("/pt/")) continue
+                
                 val slug = post.optString("slug", "")
-                val realUrl = if (slug.isNotEmpty()) buildUrl(slug) else ""
+                val realUrl = if (slug.isNotEmpty()) buildUrl(slug) else link
                 val thumb = post.optJSONObject("_embedded")
                     ?.optJSONArray("wp:featuredmedia")
                     ?.optJSONObject(0)
                     ?.optString("source_url")
                     ?.takeIf { it.startsWith("http") }
-
                 val anime = SAnime.create().apply {
-                    this.title = title
+                    title = post.getJSONObject("title").getString("rendered")
+                        .replace(Regex("<[^>]+>"), "").trim()
                     url = realUrl
                     thumbnail_url = thumb
                 }
@@ -191,10 +188,16 @@ class JavRider : AnimeHttpSource() {
             if (iframeSrc.startsWith("http")) {
                 videos.addAll(extractFromPlayer(iframeSrc, referer))
             }
+
+            document.select("video, video source").forEach { el ->
+                val src = el.attr("src").ifEmpty { el.attr("data-src") }
+                if (src.startsWith("http") && videos.none { it.url == src }) {
+                    videos.add(Video(src, "Direto", src, videoHeadersFor(referer)))
+                }
+            }
         } catch (e: Exception) {
             Log.e("JavRider", "VIDEO erro: ${e.message}", e)
         }
-        Log.e("JavRider", "VIDEO total=${videos.size}")
         return videos
     }
 
@@ -212,62 +215,78 @@ class JavRider : AnimeHttpSource() {
             .find(iframeUrl)?.groupValues?.get(1)
             ?: return videos
 
+        // Passo 1: visitar a página do iframe (pra popular cookies no CookieJar do OkHttp)
         try {
             val pageReq = Request.Builder()
                 .url(iframeUrl)
-                .headers(fullBrowserHeaders(referer, desktopUa))
+                .headers(playerPageHeaders(referer))
                 .build()
             client.newCall(pageReq).execute().use { it.body?.string().orEmpty() }
-        } catch (_: Exception) {
-            // segue
+        } catch (e: Exception) {
+            Log.e("JavRider", "Iframe erro: ${e.message}")
         }
 
-        val apiBase = "https://javplayers.com/player/index.php"
-        val postBody = "data=$hash&do=getVideo"
-            .toRequestBody("application/x-www-form-urlencoded; charset=UTF-8".toMediaType())
+        val apiUrl = "https://javplayers.com/player/index.php?data=$hash&do=getVideo"
 
-        val attempts = listOf(
-            runAttempt("$apiBase?data=$hash&do=getVideo", "GET-full-desktop", iframeUrl, desktopUa),
-            runPostAttempt(apiBase, "POST-desktop", iframeUrl, desktopUa, postBody),
-            runAttempt("$apiBase?data=$hash&do=getVideo", "GET-mobile", iframeUrl, mobileUa),
-            runPostAttempt(apiBase, "POST-mobile", iframeUrl, mobileUa, postBody),
-        )
+        // Passo 2: GET
+        var body = tryApiGet(apiUrl, iframeUrl)
 
-        var bestBody = ""
-        var bestLabel = ""
-        for ((label, body) in attempts) {
-            if (body.contains("securedLink", true) || body.contains("videoSource", true)) {
-                bestBody = body
-                bestLabel = label
-                break
-            }
-            if (body.isNotBlank() && !body.trimStart().startsWith("<") && body.length > bestBody.length) {
-                bestBody = body
-                bestLabel = label
+        // Passo 3: se veio HTML curto/vazio, tenta POST
+        if (body.length < 500 || !body.contains("securedLink", true)) {
+            val postBody = "data=$hash&do=getVideo"
+                .toRequestBody("application/x-www-form-urlencoded".toMediaType())
+            val postResp = tryApiPost(apiUrl, iframeUrl, postBody)
+            if (postResp.contains("securedLink", true) || postResp.length > body.length) {
+                body = postResp
             }
         }
-        Log.e("JavRider", "PLAYER best=$bestLabel len=${bestBody.length}")
 
-        if (bestBody.isBlank()) return videos
-
-        val normalized = bestBody.replace("\\/", "/").replace("\\u002F", "/")
+        // Extração: tenta JSON puro, depois regex
+        val normalized = body.replace("\\/", "/").replace("\\u002F", "/")
         var secured: String? = null
         var source: String? = null
+        val tracks = mutableListOf<Track>()
+
+        // Extração das legendas
+        val srtRegex = Regex("""(https?://[^"'\s<>]+\.(?:srt|vtt))""")
+        var trackCount = 1
+        srtRegex.findAll(normalized).forEach { match ->
+            val subUrl = match.groupValues[1]
+            if (tracks.none { it.url == subUrl }) {
+                tracks.add(Track(subUrl, "Português ${trackCount++}".trim()))
+            }
+        }
 
         try {
             val json = JSONObject(normalized)
             secured = json.optString("securedLink", "").takeIf { it.startsWith("http") }
             source = json.optString("videoSource", "").takeIf { it.startsWith("http") }
+            
+            // Tentar extrair de arrays como "subtitles" ou "captions" se o regex não pegar
+            val subtitles = json.optJSONArray("subtitles") ?: json.optJSONArray("captions")
+            if (subtitles != null) {
+                for (i in 0 until subtitles.length()) {
+                    val subObj = subtitles.getJSONObject(i)
+                    val file = subObj.optString("file").replace("\\/", "/")
+                    val label = subObj.optString("label", "Português")
+                    if (file.startsWith("http") && tracks.none { it.url == file }) {
+                        tracks.add(Track(file, label))
+                    }
+                }
+            }
         } catch (_: Exception) {
             // não é JSON puro
         }
+
         if (secured == null) {
             secured = Regex(""""securedLink"\s*:\s*"([^"]+)"""")
-                .find(normalized)?.groupValues?.get(1)?.takeIf { it.startsWith("http") }
+                .find(normalized)?.groupValues?.get(1)
+                ?.takeIf { it.startsWith("http") }
         }
         if (source == null) {
             source = Regex(""""videoSource"\s*:\s*"([^"]+)"""")
-                .find(normalized)?.groupValues?.get(1)?.takeIf { it.startsWith("http") }
+                .find(normalized)?.groupValues?.get(1)
+                ?.takeIf { it.startsWith("http") }
         }
         if (secured == null) {
             secured = Regex("""(https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+)""")
@@ -275,147 +294,52 @@ class JavRider : AnimeHttpSource() {
         }
         if (secured == null) {
             secured = Regex("""["']([^"']*master\.m3u8[^"']*)["']""")
-                .find(normalized)?.groupValues?.get(1)?.let {
-                    if (it.startsWith("http")) it else "https://javplayers.com$it"
-                }
+                .find(normalized)?.groupValues?.get(1)
+                ?.let { if (it.startsWith("http")) it else "https://javplayers.com$it" }
         }
 
-        Log.e("JavRider", "PLAYER secured=$secured source=$source")
-
-        val usedUrl = secured ?: source
-        if (usedUrl == null) {
-            val htmlFull = tryFullIframeHtml(iframeUrl, referer)
-            val m3 = Regex("""(https?://javplayers\.com/m3/[A-Za-z0-9+/=%]+)""")
-                .find(htmlFull)?.groupValues?.get(1)
-            Log.e("JavRider", "PLAYER fallback m3 do HTML=$m3")
-            if (m3 == null) return videos
-            videos.add(Video(m3, "Auto", m3, videoHeadersFor(iframeUrl)))
-            return videos
+        // Montagem do vídeo anexando a variável tracks que capturou os links das legendas
+        if (secured != null) {
+            videos.add(Video(secured, "Principal", secured, videoHeadersFor(iframeUrl), subtitleTracks = tracks))
+        }
+        if (source != null && source != secured) {
+            videos.add(Video(source, "Alternativo", source, videoHeadersFor(iframeUrl), subtitleTracks = tracks))
         }
 
-        val subtitles = extractSubtitles(normalized)
-        val masterBody = tryApiGet(usedUrl, "https://javplayers.com/")
-        Log.e("JavRider", "PLAYER master[${masterBody.length}] first400=${masterBody.take(400)}")
-
-        val variants = parseM3u8Master(masterBody, usedUrl)
-        Log.e("JavRider", "PLAYER variants=${variants.size}")
-
-        if (variants.isNotEmpty()) {
-            variants.forEach { (label, url) ->
-                videos.add(Video(url, label, url, videoHeadersFor(iframeUrl), subtitleTracks = subtitles))
-            }
-        } else {
-            videos.add(Video(usedUrl, "Auto", usedUrl, videoHeadersFor(iframeUrl), subtitleTracks = subtitles))
-        }
         return videos
     }
 
-    private fun tryFullIframeHtml(iframeUrl: String, referer: String): String = try {
-        val req = Request.Builder()
-            .url(iframeUrl)
-            .headers(fullBrowserHeaders(referer, desktopUa))
-            .build()
+    private fun tryApiGet(url: String, referer: String): String = try {
+        val req = Request.Builder().url(url).headers(apiHeadersFor(referer)).build()
         client.newCall(req).execute().use { it.body?.string().orEmpty() }
-    } catch (_: Exception) {
+    } catch (e: Exception) {
         ""
     }
 
-    private fun runAttempt(url: String, label: String, referer: String, ua: String): Pair<String, String> = try {
+    private fun tryApiPost(url: String, referer: String, body: okhttp3.RequestBody): String = try {
         val req = Request.Builder()
             .url(url)
-            .headers(fullBrowserHeaders(referer, ua))
-            .build()
-        val resp = client.newCall(req).execute()
-        val body = resp.body?.string().orEmpty()
-        Log.e("JavRider", "ATTEMPT[$label] code=${resp.code} len=${body.length} first80=${body.take(80).replace("\n", " ")}")
-        label to body
-    } catch (e: Exception) {
-        Log.e("JavRider", "ATTEMPT[$label] erro=${e.message}")
-        label to ""
-    }
-
-    private fun runPostAttempt(url: String, label: String, referer: String, ua: String, body: RequestBody): Pair<String, String> = try {
-        val req = Request.Builder()
-            .url(url)
-            .headers(fullBrowserHeaders(referer, ua))
+            .headers(apiHeadersFor(referer))
             .post(body)
             .build()
-        val resp = client.newCall(req).execute()
-        val respBody = resp.body?.string().orEmpty()
-        Log.e("JavRider", "ATTEMPT[$label] code=${resp.code} len=${respBody.length} first80=${respBody.take(80).replace("\n", " ")}")
-        label to respBody
-    } catch (e: Exception) {
-        Log.e("JavRider", "ATTEMPT[$label] erro=${e.message}")
-        label to ""
-    }
-
-    private fun extractSubtitles(body: String): List<Track> {
-        val tracks = mutableListOf<Track>()
-        val seen = mutableSetOf<String>()
-        Regex("""https?://[^"'\s]+\.srt""")
-            .findAll(body).forEach { m ->
-                if (seen.add(m.value)) tracks.add(Track(m.value, "Português"))
-            }
-        return tracks
-    }
-
-    private fun parseM3u8Master(body: String, masterUrl: String): List<Pair<String, String>> {
-        val result = mutableListOf<Triple<Int, String, String>>()
-        val lines = body.lines()
-        var infoLine: String? = null
-        for (i in lines.indices) {
-            val line = lines[i].trim()
-            if (line.startsWith("#EXT-X-STREAM-INF:")) {
-                infoLine = line
-            } else if (infoLine != null && line.isNotEmpty() && !line.startsWith("#")) {
-                val height = Regex("""RESOLUTION=\d+x(\d+)""")
-                    .find(infoLine)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                val label = when {
-                    height >= 1080 -> "1080p"
-                    height >= 720 -> "720p"
-                    height >= 480 -> "480p"
-                    height >= 360 -> "360p"
-                    height > 0 -> "${height}p"
-                    else -> "Auto"
-                }
-                val url = if (line.startsWith("http")) {
-                    line
-                } else if (line.startsWith("/")) {
-                    val host = masterUrl.substringAfter("://").substringBefore("/")
-                    "https://$host$line"
-                } else {
-                    "${masterUrl.substringBeforeLast("/")}/$line"
-                }
-                result.add(Triple(height, label, url))
-                infoLine = null
-            }
-        }
-        return result.sortedByDescending { it.first }.map { it.second to it.third }
-    }
-
-    private fun tryApiGet(url: String, referer: String): String = try {
-        val req = Request.Builder()
-            .url(url)
-            .headers(fullBrowserHeaders(referer, desktopUa))
-            .build()
         client.newCall(req).execute().use { it.body?.string().orEmpty() }
     } catch (e: Exception) {
-        Log.e("JavRider", "GET erro: ${e.message}")
         ""
     }
 
-    private fun fullBrowserHeaders(referer: String, ua: String): Headers = Headers.Builder()
-        .add("User-Agent", ua)
-        .add("Accept", "*/*")
+    private fun playerPageHeaders(referer: String): Headers = Headers.Builder()
+        .add("User-Agent", desktopUa)
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
+        .add("Referer", referer)
+        .build()
+
+    private fun apiHeadersFor(referer: String): Headers = Headers.Builder()
+        .add("User-Agent", desktopUa)
+        .add("Accept", "application/json, text/javascript, */*; q=0.01")
         .add("Accept-Language", "pt-BR,pt;q=0.9,en;q=0.8")
         .add("Referer", referer)
         .add("Origin", "https://javplayers.com")
         .add("X-Requested-With", "XMLHttpRequest")
-        .add("Sec-Fetch-Dest", "empty")
-        .add("Sec-Fetch-Mode", "cors")
-        .add("Sec-Fetch-Site", "same-origin")
-        .add("sec-ch-ua", "\"Chromium\";v=\"139\", \"Not;A=Brand\";v=\"99\"")
-        .add("sec-ch-ua-mobile", if (ua.contains("Mobile")) "?1" else "?0")
-        .add("sec-ch-ua-platform", if (ua.contains("Windows")) "\"Windows\"" else "\"Android\"")
         .build()
 }
