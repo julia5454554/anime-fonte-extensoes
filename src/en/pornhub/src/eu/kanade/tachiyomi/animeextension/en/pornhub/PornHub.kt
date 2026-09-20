@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.animeextension.pt.pornhub
+package eu.kanade.tachiyomi.animeextension.en.pornhub
 
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -8,8 +8,9 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -17,13 +18,12 @@ import org.jsoup.nodes.Element
 class PornHub : ParsedAnimeHttpSource() {
 
     override val name = "PornHub"
-    override val baseUrl = "https://www.pornhub.com"
-    override val lang = "pt-BR"
-    override val supportsLatest = true
 
-    private val json = Json {
-        ignoreUnknownKeys = true
-    }
+    override val baseUrl = "https://pt.pornhub.com"
+
+    override val lang = "en"
+
+    override val supportsLatest = true
 
     // ============================== Popular ==============================
 
@@ -33,7 +33,7 @@ class PornHub : ParsedAnimeHttpSource() {
     override fun popularAnimeSelector() =
         "div.gridWrapper li.pcVideoListItem"
 
-    override fun popularAnimeFromElement(element: Element) =
+    override fun popularAnimeFromElement(element: Element): SAnime =
         element.toAnime()
 
     override fun popularAnimeNextPageSelector() =
@@ -47,7 +47,7 @@ class PornHub : ParsedAnimeHttpSource() {
     override fun latestUpdatesSelector() =
         popularAnimeSelector()
 
-    override fun latestUpdatesFromElement(element: Element) =
+    override fun latestUpdatesFromElement(element: Element): SAnime =
         element.toAnime()
 
     override fun latestUpdatesNextPageSelector() =
@@ -55,7 +55,7 @@ class PornHub : ParsedAnimeHttpSource() {
 
     // =============================== Search ===============================
 
-    override fun getFilterList() =
+    override fun getFilterList(): AnimeFilterList =
         AnimeFilterList()
 
     override fun searchAnimeRequest(
@@ -65,34 +65,25 @@ class PornHub : ParsedAnimeHttpSource() {
     ) = GET("$baseUrl/video/search?search=$query&page=$page")
 
     override fun searchAnimeSelector() =
-        popularAnimeSelector()
+        "div.gridWrapper li.pcVideoListItem"
 
-    override fun searchAnimeFromElement(element: Element) =
+    override fun searchAnimeFromElement(element: Element): SAnime =
         element.toAnime()
 
     override fun searchAnimeNextPageSelector() =
-        popularAnimeNextPageSelector()
+        "a.page_next"
 
     // ============================== Details ==============================
 
-    override fun animeDetailsParse(document: Document) =
-        SAnime.create().apply {
+    override fun animeDetailsParse(document: Document): SAnime {
+        return SAnime.create().apply {
             title = document
                 .selectFirst("h1")
                 ?.text()
                 ?.trim()
                 .orEmpty()
 
-            thumbnail_url = document
-                .selectFirst("img.videoElementPoster")
-                ?.absUrl("src")
-                ?: document
-                    .selectFirst("noscript:has(img.videoElementPoster)")
-                    ?.let {
-                        org.jsoup.Jsoup.parse(it.html())
-                            .selectFirst("img")
-                            ?.absUrl("src")
-                    }
+            thumbnail_url = getPosterUrl(document)
 
             description = document
                 .selectFirst("meta[property=og:description]")
@@ -106,6 +97,28 @@ class PornHub : ParsedAnimeHttpSource() {
 
             status = SAnime.COMPLETED
         }
+    }
+
+    private fun getPosterUrl(document: Document): String? {
+        val directPoster = document
+            .selectFirst("img.videoElementPoster")
+            ?.absUrl("src")
+            ?.takeIf { it.isNotBlank() }
+
+        if (directPoster != null) {
+            return directPoster
+        }
+
+        val noscript = document
+            .selectFirst("noscript:has(img.videoElementPoster)")
+            ?: return null
+
+        return org.jsoup.Jsoup
+            .parse(noscript.html())
+            .selectFirst("img")
+            ?.absUrl("src")
+            ?.takeIf { it.isNotBlank() }
+    }
 
     // ============================== Episodes ==============================
 
@@ -125,7 +138,7 @@ class PornHub : ParsedAnimeHttpSource() {
     override fun episodeFromElement(element: Element): SEpisode =
         throw UnsupportedOperationException()
 
-    // =============================== Vídeo ===============================
+    // =============================== Vídeos ===============================
 
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
@@ -139,17 +152,27 @@ class PornHub : ParsedAnimeHttpSource() {
             ?: return emptyList()
 
         val playerData = runCatching {
-            json.decodeFromString<PhubPlayer>(rawJson)
-        }.getOrNull() ?: return emptyList()
+            rawJson.parseAs<PhubPlayer>()
+        }.getOrNull()
+            ?: return emptyList()
 
-        return playerData.mediaDefinitions.orEmpty()
-            .mapNotNull { item ->
-                val url = item.videoUrl ?: return@mapNotNull null
+        return playerData.mediaDefinitions
+            .orEmpty()
+            .mapNotNull { media ->
+                val videoUrl = media.videoUrl
+                    ?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+
+                val quality = media.quality
+                    ?.toString()
+                    ?.trim('"')
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "Unknown"
 
                 Video(
-                    url = url,
-                    quality = item.quality?.toString() ?: "Unknown",
-                    videoUrl = url,
+                    videoUrl,
+                    quality,
+                    videoUrl,
                 )
             }
     }
@@ -165,31 +188,46 @@ class PornHub : ParsedAnimeHttpSource() {
 
     // ============================== Utilities ==============================
 
-    private fun Element.toAnime(): SAnime? {
-        val link = selectFirst("a") ?: return null
-        val href = link.absUrl("href").ifBlank { return null }
+    private fun Element.toAnime(): SAnime {
+        val link = selectFirst("a")
+            ?: error("Card sem link")
+
+        val href = link
+            .absUrl("href")
+            .takeIf { it.isNotBlank() }
+            ?: error("Card sem URL")
 
         val image = selectFirst("img")
 
+        val title = image
+            ?.attr("alt")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: link
+                .attr("title")
+                .trim()
+                .takeIf { it.isNotBlank() }
+            ?: "Sem título"
+
         return SAnime.create().apply {
             setUrlWithoutDomain(href)
-            title = image?.attr("alt")
-                ?.trim()
-                .orEmpty()
+            this.title = title
 
-            thumbnail_url = image?.absUrl("src")
+            thumbnail_url = image
+                ?.absUrl("src")
+                ?.takeIf { it.isNotBlank() }
         }
     }
-
-    @Serializable
-    data class PhubPlayer(
-        val mediaDefinitions: List<MediaDefinition>? = null,
-    )
-
-    @Serializable
-    data class MediaDefinition(
-        val format: String? = null,
-        val videoUrl: String? = null,
-        val quality: String? = null,
-    )
 }
+
+@Serializable
+data class PhubPlayer(
+    val mediaDefinitions: List<PhubVideo>? = null,
+)
+
+@Serializable
+data class PhubVideo(
+    val format: String? = null,
+    val videoUrl: String? = null,
+    val quality: JsonElement? = null,
+)
