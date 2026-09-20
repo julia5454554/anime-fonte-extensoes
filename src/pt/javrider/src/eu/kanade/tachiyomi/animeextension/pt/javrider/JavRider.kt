@@ -265,8 +265,8 @@ class JavRider : AnimeHttpSource() {
         // =========================================================================
         // EXTRAÇÃO DE LEGENDAS - CAMADA 1: Foco exclusivo na legenda PT (Correção mpv)
         // =========================================================================
-        
-        // Esta Regex procura a tag PT e garante que a extração para imediatamente 
+
+        // Esta Regex procura a tag PT e garante que a extração para imediatamente
         // caso encontre vírgulas ou novos colchetes (ex: ,[EN]), resolvendo o bug do mpv.
         val regexPt = Regex("""\[(?:PT|PT-BR|pt|pt-br|Português)\](https?://[^,\[\]"'\s<>]+?\.(?:srt|vtt))""", RegexOption.IGNORE_CASE)
         var ptEncontrada = false
@@ -318,7 +318,7 @@ class JavRider : AnimeHttpSource() {
                     // Limpeza preventiva extraindo até à primeira vírgula (se houver lixo)
                     val file = subObj.optString("file").replace("\\/", "/").substringBefore(",").substringBefore("[")
                     val label = subObj.optString("label", "Português (PT)")
-                    
+
                     if (file.startsWith("http") && tracks.none { it.url == file }) {
                         // Como pediu apenas PT, filtramos pela label ou adicionamos se for a única opção
                         if (label.contains("pt", ignoreCase = true) || label.contains("português", ignoreCase = true) || tracks.isEmpty()) {
