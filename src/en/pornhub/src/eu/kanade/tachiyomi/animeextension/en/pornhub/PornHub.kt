@@ -136,73 +136,70 @@ class PornHub : ParsedAnimeHttpSource() {
     }
 
     override fun videoListParse(response: Response): List<Video> {
-        val document = Jsoup.parse(response.body.string())
+        val html = response.body.string()
         val videoList = mutableListOf<Video>()
 
-        val scripts = document.select("script").toList()
-        var flashvarsData = ""
+        val videoHeaders = headersBuilder()
+            .add("Referer", response.request.url.toString())
+            .build()
 
-        // Procura pelo bloco que contém as variáveis de vídeo (flashvars)
-        for (i in scripts.indices) {
-            val scriptContent = scripts[i].data()
-            if (scriptContent.contains("flashvars")) {
-                val regex = """var\s+flashvars_\d+\s*=\s*(\{.*?});""".toRegex(RegexOption.DOT_MATCHES_ALL)
-                val match = regex.find(scriptContent)
-                if (match != null) {
-                    flashvarsData = match.groupValues[1]
-                    break
-                }
-            }
-        }
+        // 1. Tentar extrair do objeto JSON mediaDefinitions usando Regex no HTML completo
+        val mediaDefinitionsRegex = """"mediaDefinitions"\s*:\s*(\[.*?\])""".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val match = mediaDefinitionsRegex.find(html)
 
-        if (flashvarsData.isNotBlank()) {
+        if (match != null) {
             try {
-                val json = JSONObject(flashvarsData)
-                val mediaDefinitions = json.optJSONArray("mediaDefinitions") ?: JSONArray()
+                val jsonArray = JSONArray(match.groupValues[1])
+                for (i in 0 until jsonArray.length()) {
+                    val media = jsonArray.optJSONObject(i) ?: continue
+                    var videoUrl = media.optString("videoUrl", "")
+                    var quality = media.optString("quality", "")
 
-                val videoHeaders = headersBuilder()
-                    .add("Referer", response.request.url.toString())
-                    .build()
+                    if (quality.isEmpty() || quality == "null") {
+                        val qualityArray = media.optJSONArray("quality")
+                        if (qualityArray != null && qualityArray.length() > 0) {
+                            quality = qualityArray.optString(0, "")
+                        }
+                    }
 
-                for (i in 0 until mediaDefinitions.length()) {
-                    val media = mediaDefinitions.optJSONObject(i) ?: continue
-                    val videoUrl = media.optString("videoUrl", "")
-                    val quality = media.optString("quality", "")
-                    val format = media.optString("format", "")
-
-                    if (videoUrl.isNotBlank() && (format == "hls" || videoUrl.contains(".m3u8"))) {
-                        val qualityLabel = if (quality.isNotBlank()) "Qualidade $quality" else "Vídeo ${i + 1}"
-                        videoList.add(Video(videoUrl, qualityLabel, videoUrl, headers = videoHeaders))
+                    if (videoUrl.isNotBlank()) {
+                        videoUrl = unescapeUrl(videoUrl)
+                        val label = if (quality.isNotBlank()) "Qualidade $quality" else "HLS / MP4 ${i + 1}"
+                        if (videoList.none { it.url == videoUrl }) {
+                            videoList.add(Video(videoUrl, label, videoUrl, headers = videoHeaders))
+                        }
                     }
                 }
-            } catch (e: Exception) {
-                // Tratamento de contingência caso o JSON Parse falhe
+            } catch (_: Exception) {
+                // Falha no parsing do JSON
             }
         }
 
-        // Se a extração em JSON estruturado falhar, utiliza a busca por Regex com tratamento de escape adequado
+        // 2. Fallback via regex direto para qualquer padrao "videoUrl":"https..."
         if (videoList.isEmpty()) {
-            val hlsRegex = """"videoUrl"\s*:\s*"([^"]+)"""".toRegex()
-            val matches = hlsRegex.findAll(document.html())
-
-            val videoHeaders = headersBuilder()
-                .add("Referer", response.request.url.toString())
-                .build()
+            val urlRegex = """"videoUrl"\s*:\s*"([^"]+)"""".toRegex()
+            val matches = urlRegex.findAll(html)
 
             var count = 1
-            for (match in matches) {
-                var url = match.groupValues[1]
-                url = url.replace("\\/", "/")
-                url = url.replace("\\u0026", "&")
+            for (m in matches) {
+                val rawUrl = m.groupValues[1]
+                val cleanUrl = unescapeUrl(rawUrl)
 
-                if (url.isNotBlank() && url.contains(".m3u8") && videoList.none { it.url == url }) {
-                    videoList.add(Video(url, "Qualidade $count", url, headers = videoHeaders))
+                if (cleanUrl.isNotBlank() && videoList.none { it.url == cleanUrl }) {
+                    val label = if (cleanUrl.contains(".m3u8")) "Auto (HLS $count)" else "Vídeo $count"
+                    videoList.add(Video(cleanUrl, label, cleanUrl, headers = videoHeaders))
                     count++
                 }
             }
         }
 
         return videoList
+    }
+
+    private fun unescapeUrl(url: String): String {
+        return url.replace("""\/""", "/")
+            .replace("""\u0026""", "&")
+            .replace("""&amp;""", "&")
     }
 
     override fun videoUrlParse(document: Document): String {
