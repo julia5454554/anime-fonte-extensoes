@@ -28,12 +28,11 @@ class PornHub : ParsedAnimeHttpSource() {
 
     override val client: OkHttpClient = network.client.newBuilder().build()
 
-    // Configuração dos Headers com User-Agent e cookie formatados para MÓVEL (Mobile)
     override fun headersBuilder(): Headers.Builder {
         return Headers.Builder()
-            .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36")
+            .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
             .add("Accept-Language", "en-US,en;q=0.9")
-            .add("Cookie", "age_verified=1; platform=mobile")
+            .add("Cookie", "age_verified=1; platform=pc")
     }
 
     // ============================== POPULAR ==============================
@@ -42,7 +41,7 @@ class PornHub : ParsedAnimeHttpSource() {
         return GET("$baseUrl/video?o=mv&page=$page", headers)
     }
 
-    override fun popularAnimeSelector(): String = "ul.videos li, ul.search-video-thumbs li, div.ph-thumbnail-card, li.pcVideoListItem, div.videoBox"
+    override fun popularAnimeSelector(): String = "ul.videos li, ul.search-video-thumbs li, div.ph-thumbnail-card, li.pcVideoListItem"
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
@@ -105,10 +104,10 @@ class PornHub : ParsedAnimeHttpSource() {
     override fun animeDetailsParse(document: Document): SAnime {
         val anime = SAnime.create()
         
-        anime.title = document.select("h1.inlineFree, .video-wrapper h1, h1, .title").text().ifBlank { "Vídeo" }
-        anime.author = document.select(".userInfo .usernameWrap a, .video-uploader-name, .username").text()
-        anime.description = document.select(".video-description, .descriptionContainer, .description").text()
-        anime.genre = document.select(".categoriesWrapper a, .tagsWrapper a, .categories a").joinToString { it.text() }
+        anime.title = document.select("h1.inlineFree, .video-wrapper h1, h1").text().ifBlank { "Vídeo" }
+        anime.author = document.select(".userInfo .usernameWrap a, .video-uploader-name").text()
+        anime.description = document.select(".video-description, .descriptionContainer").text()
+        anime.genre = document.select(".categoriesWrapper a, .tagsWrapper a").joinToString { it.text() }
         
         val thumb = document.select("meta[property=og:image]").attr("content")
         if (thumb.isNotBlank()) {
@@ -143,6 +142,7 @@ class PornHub : ParsedAnimeHttpSource() {
         val scripts = document.select("script").toList()
         var flashvarsData = ""
 
+        // Procura pelo bloco que contém as variáveis de vídeo (flashvars)
         for (i in scripts.indices) {
             val scriptContent = scripts[i].data()
             if (scriptContent.contains("flashvars")) {
@@ -171,16 +171,16 @@ class PornHub : ParsedAnimeHttpSource() {
                     val format = media.optString("format", "")
 
                     if (videoUrl.isNotBlank() && (format == "hls" || videoUrl.contains(".m3u8"))) {
-                        val qualityLabel = if (quality.isNotBlank()) "Qualidade $quality (Mobile)" else "Vídeo Mobile ${i + 1}"
+                        val qualityLabel = if (quality.isNotBlank()) "Qualidade $quality" else "Vídeo ${i + 1}"
                         videoList.add(Video(videoUrl, qualityLabel, videoUrl, headers = videoHeaders))
                     }
                 }
             } catch (e: Exception) {
-                // Fallback de exceção
+                // Tratamento de contingência caso o JSON Parse falhe
             }
         }
 
-        // Caso o parse do JSON falhe na exibição mobile, utiliza a busca por Regex
+        // Se a extração em JSON estruturado falhar, utiliza a busca por Regex com tratamento de escape adequado
         if (videoList.isEmpty()) {
             val hlsRegex = """"videoUrl"\s*:\s*"([^"]+)"""".toRegex()
             val matches = hlsRegex.findAll(document.html())
@@ -196,7 +196,7 @@ class PornHub : ParsedAnimeHttpSource() {
                 url = url.replace("\\u0026", "&")
 
                 if (url.isNotBlank() && url.contains(".m3u8") && videoList.none { it.url == url }) {
-                    videoList.add(Video(url, "Qualidade $count (Mobile)", url, headers = videoHeaders))
+                    videoList.add(Video(url, "Qualidade $count", url, headers = videoHeaders))
                     count++
                 }
             }
