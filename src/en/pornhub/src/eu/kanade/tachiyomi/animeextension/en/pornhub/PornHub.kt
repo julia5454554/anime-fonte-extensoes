@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.util.asJsoup
 import fi.iki.elonen.NanoHTTPD
 import keiyoushi.utils.getPreferencesLazy
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonPrimitive
@@ -264,14 +265,14 @@ class PornHubProxyServer(
     private val baseUrl: String,
 ) : NanoHTTPD("127.0.0.1", 0) {
 
-    override fun serve(session: IHTTPSession): Response {
+    override fun serve(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
         if (session.uri != "/proxy") {
-            return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
+            return newFixedLengthResponse(NanoHTTPD.Response.Status.NOT_FOUND, "text/plain", "not found")
         }
 
         // O NanoHTTPD decodifica automaticamente os query params
         val targetUrl = session.parameters["url"]?.firstOrNull()
-            ?: return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "missing url")
+            ?: return newFixedLengthResponse(NanoHTTPD.Response.Status.BAD_REQUEST, "text/plain", "missing url")
 
         val pageReferer = session.parameters["referer"]?.firstOrNull() ?: "$baseUrl/"
 
@@ -291,7 +292,7 @@ class PornHubProxyServer(
             client.newCall(reqBuilder.build()).execute()
         } catch (e: Exception) {
             Log.e(TAG, "Upstream exception", e)
-            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", e.message ?: "err")
+            return newFixedLengthResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, "text/plain", e.message ?: "err")
         }
 
         Log.d(TAG, "← ${upstream.code} len=${upstream.header("Content-Length")} range=${upstream.header("Content-Range")}")
@@ -299,15 +300,15 @@ class PornHubProxyServer(
         if (upstream.code >= 400) {
             val code = upstream.code
             upstream.close()
-            val status = Response.Status.lookup(code) ?: Response.Status.INTERNAL_ERROR
+            val status = NanoHTTPD.Response.Status.lookup(code) ?: NanoHTTPD.Response.Status.INTERNAL_ERROR
             return newFixedLengthResponse(status, "text/plain", "upstream $code")
         }
 
         val body = upstream.body
-            ?: return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "no body")
+            ?: return newFixedLengthResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, "text/plain", "no body")
 
         val mime = upstream.header("Content-Type") ?: "video/mp4"
-        val status = if (upstream.code == 206) Response.Status.PARTIAL_CONTENT else Response.Status.OK
+        val status = if (upstream.code == 206) NanoHTTPD.Response.Status.PARTIAL_CONTENT else NanoHTTPD.Response.Status.OK
         val length = body.contentLength()
 
         val nanoResponse = if (length >= 0) {
